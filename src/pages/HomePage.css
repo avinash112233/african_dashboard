@@ -1,0 +1,20 @@
+.home-page {
+  min-height: calc(100vh - 56px);
+  padding-top: 20px;
+}
+
+.hero-section {
+  padding: 40px 0;
+}
+
+.feature-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.feature-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+
+
