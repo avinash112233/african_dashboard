@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import MapVisualization from '../components/maps/MapVisualization';
-import { getNOAA20VIIRS7DayDataset } from '../services/firmsApi';
+import { getNOAA21VIIRS7DayFromWFS } from '../services/firmsApi';
 import { getAfricanAERONETSites, getAERONETData, getAERONETDataAfrica, type AERONETDataPoint, type SiteAODMap } from '../services/aeronetApi';
 import type { FIRMSFirePoint } from '../services/firmsApi';
 import type { AERONETSite } from '../services/aeronetApi';
 import { TimeSeriesChart, ScatterPlotChart, WavelengthBarChart } from '../components/charts';
 import { normalizeAeronetDate, formatDisplayDate, formatDateMonthDayYear } from '../utils/dateFormat';
 import { computeDailyMeanAOD, getAODLevelColor, getAODLevelLabel, AOD_CLASSIFICATION_LEGEND } from '../utils/aodUtils';
+import { haversineKm } from '../utils/geoUtils';
 import './DashboardPage.css';
 
 interface SelectedFireData {
@@ -37,6 +38,9 @@ const DashboardPage = () => {
   const [showFires, setShowFires] = useState(false);
   const [showAODHeatMap, setShowAODHeatMap] = useState(false);
   const [showVIIRSImagery, setShowVIIRSImagery] = useState(false);
+  const [circleSelectActive, setCircleSelectActive] = useState(false);
+  const [circleCenter, setCircleCenter] = useState<[number, number] | null>(null);
+  const [circleRadiusKm, setCircleRadiusKm] = useState(25);
   const [fireLoading, setFireLoading] = useState(false);
   const [aeronetLoading, setAeronetLoading] = useState(false);
   const [aeronetError, setAeronetError] = useState<string | null>(null);
@@ -48,10 +52,10 @@ const DashboardPage = () => {
 
   useEffect(() => {
     setFireLoading(true);
-    getNOAA20VIIRS7DayDataset()
+    getNOAA21VIIRS7DayFromWFS()
       .then(setFirePoints)
       .finally(() => setFireLoading(false));
-  }, []);
+  }, [selectedDate]);
 
   useEffect(() => {
     if (selectedSite) {
@@ -68,12 +72,12 @@ const DashboardPage = () => {
   }, [selectedDate, selectedSite?.site, selectedSite?.name]);
 
   useEffect(() => {
-    if (showAeronet) {
+    if (showAeronet || showAODHeatMap) {
       const start = selectedDate.subtract(6, 'day').format('YYYY-MM-DD');
       const end = selectedDate.format('YYYY-MM-DD');
       getAERONETDataAfrica(start, end).then(setSiteAodMap);
     }
-  }, [selectedDate, showAeronet]);
+  }, [selectedDate, showAeronet, showAODHeatMap]);
 
   useEffect(() => {
     setAeronetLoading(true);
@@ -87,6 +91,13 @@ const DashboardPage = () => {
       })
       .finally(() => setAeronetLoading(false));
   }, []);
+
+  const pointsInCircle = circleCenter
+    ? firePoints.filter((p) => {
+        if (isNaN(p.latitude) || isNaN(p.longitude)) return false;
+        return haversineKm(circleCenter[0], circleCenter[1], p.latitude, p.longitude) <= circleRadiusKm;
+      })
+    : [];
 
   const handleAeronetSiteClick = (site: AERONETSite) => {
     setSelectedSite(site);
@@ -178,11 +189,57 @@ const DashboardPage = () => {
                 <input
                   type="checkbox"
                   checked={showFires}
-                  onChange={(e) => setShowFires(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setShowFires(checked);
+                    if (checked) setShowAODHeatMap(false);
+                    if (!checked) setCircleSelectActive(false);
+                  }}
+                  disabled={fireLoading}
                 />
-                Fire Hotspots (VIIRS)
+                Fire Hotspots (VIIRS) {fireLoading && '(loading…)'}
               </label>
-              <small className="layer-tip">Tip: Zoom in (level 7+) to see table of fire points in view</small>
+              {showFires && (
+                <>
+                  <label className="layer-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={circleSelectActive}
+                      onChange={(e) => setCircleSelectActive(e.target.checked)}
+                    />
+                    Select area (click map to draw circle)
+                  </label>
+                  {circleSelectActive && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                      <label style={{ fontSize: 12 }}>
+                        Radius (km):{' '}
+                        <select
+                          value={circleRadiusKm}
+                          onChange={(e) => setCircleRadiusKm(Number(e.target.value))}
+                          style={{ padding: '2px 6px', fontSize: 12 }}
+                        >
+                          {[5, 10, 25, 50, 100].map((r) => (
+                            <option key={r} value={r}>{r} km</option>
+                          ))}
+                        </select>
+                      </label>
+                      {circleCenter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCircleCenter(null);
+                            setCircleSelectActive(false);
+                          }}
+                          style={{ padding: '2px 8px', fontSize: 11 }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+              <small className="layer-tip">VIIRS NOAA-21 7d · Select area for points table (no zoom needed)</small>
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -191,6 +248,9 @@ const DashboardPage = () => {
                 />
                 AOD Heat Map
               </label>
+              {showAODHeatMap && (
+                <small className="layer-tip">Green→Yellow→Orange→Red by AOD (AERONET 7d)</small>
+              )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -199,6 +259,9 @@ const DashboardPage = () => {
                 />
                 VIIRS Imagery
               </label>
+              {showVIIRSImagery && (
+                <small className="layer-tip">NASA GIBS · True Color (S-NPP) · Uses selected date</small>
+              )}
               <label className="layer-checkbox layer-disabled">
                 <input type="checkbox" disabled />
                 MERRA2 PM2.5 (Coming soon)
@@ -232,9 +295,8 @@ const DashboardPage = () => {
             )}
             {fireLoading && (
               <div className="map-loading-overlay">
-                <div className="spinner-border text-primary" role="status">
-                  <span className="visually-hidden">Loading fire data...</span>
-                </div>
+                <div className="spinner-border text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text">Loading fire hotspots…</p>
               </div>
             )}
             <div className="map-container">
@@ -252,9 +314,18 @@ const DashboardPage = () => {
                 showAeronet={showAeronet}
                 showAODHeatMap={showAODHeatMap}
                 showVIIRSImagery={showVIIRSImagery}
+                selectedDate={
+                  selectedDate.isAfter(dayjs(), 'day')
+                    ? dayjs().format('YYYY-MM-DD')
+                    : selectedDate.format('YYYY-MM-DD')
+                }
                 onFireClick={handleFireClick}
                 onAeronetSiteClick={handleAeronetSiteClick}
-                selectedDate={selectedDate.format('YYYY-MM-DD')}
+                circleCenter={circleCenter}
+                circleRadiusKm={circleRadiusKm}
+                circleSelectActive={circleSelectActive}
+                onCircleCenterChange={(lat, lng) => setCircleCenter([lat, lng])}
+                pointsInCircle={pointsInCircle}
               />
             </div>
             {showAeronet && (selectedSite ? (chartLoading || chartData.length > 0) : true) && (
@@ -389,7 +460,7 @@ const DashboardPage = () => {
                   </div>
                 ) : selectedFire ? (
                   <div className="selected-fire-details">
-                    <p className="data-source">VIIRS / NOAA-20 [375m]</p>
+                    <p className="data-source">VIIRS / NOAA-21 [375m]</p>
                     <table className="selected-data-table">
                       <tbody>
                         <tr><td>LATITUDE</td><td>{selectedFire.latitude.toFixed(5)}</td></tr>
@@ -407,7 +478,7 @@ const DashboardPage = () => {
                         <tr><td>DAYNIGHT</td><td>{selectedFire.daynight === 'D' ? 'D' : selectedFire.daynight === 'N' ? 'N' : selectedFire.daynight}</td></tr>
                       </tbody>
                     </table>
-                    <p className="data-source-footer">Source: NASA FIRMS (VIIRS)</p>
+                    <p className="data-source-footer">Source: NASA FIRMS (VIIRS NOAA-21)</p>
                   </div>
                 ) : (
                   <p className="text-muted">Click a marker on the map or select a site from the left sidebar to view data.</p>

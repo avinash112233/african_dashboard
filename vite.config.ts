@@ -33,16 +33,22 @@ export default defineConfig({
           });
         },
       },
+      // Proxy GIBS tiles (NASA VIIRS/MODIS) - avoids 403/CORS when loading from browser
+      '^/api/gibs': {
+        target: 'https://gibs.earthdata.nasa.gov',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/api\/gibs/, ''),
+      },
       // Proxy FIRMS API requests to avoid CORS issues
       '^/api/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',
         changeOrigin: true,
         secure: true,
         rewrite: (path) => {
-          // Remove /api/firms prefix and keep the rest of the path
-          // /api/firms/data/active_fire/... -> /data/active_fire/...
+          // /api/firms/api/... -> /api/...
+          // /api/firms/mapserver/... -> /mapserver/...
           const newPath = path.replace(/^\/api\/firms/, '');
-          console.log('[Vite Proxy] FIRMS Rewrite:', path, '->', newPath);
           return newPath;
         },
         configure: (proxy, _options) => {

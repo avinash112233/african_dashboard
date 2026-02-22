@@ -147,15 +147,15 @@ const CanvasFireLayer = ({
         ctx.fillStyle = '#ff0000';
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
         ctx.lineWidth = 1;
-      }
-      for (const fire of toDraw) {
-        const cp = (map as L.Map).latLngToContainerPoint([fire.latitude, fire.longitude]);
-        const x = cp.x;
-        const y = cp.y;
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+        for (const fire of toDraw) {
+          const cp = (map as L.Map).latLngToContainerPoint([fire.latitude, fire.longitude]);
+          const x = cp.x;
+          const y = cp.y;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
       }
 
       (canvas as any)._firePoints = toDraw;
