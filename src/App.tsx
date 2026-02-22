@@ -6,6 +6,7 @@ import './App.css';
 
 // Layout
 import Navigation from './components/layout/Navigation';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Pages
 import HomePage from './pages/HomePage';
@@ -17,12 +18,12 @@ import TeamPage from './pages/TeamPage';
 function App() {
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Router basename="/new_web/african_dashboard">
+      <Router basename="/">
         <div className="App">
           <Navigation />
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/dashboard" element={<ErrorBoundary><DashboardPage /></ErrorBoundary>} />
             <Route path="/data-download" element={<DataDownloadPage />} />
             <Route path="/publications" element={<PublicationsPage />} />
             <Route path="/team" element={<TeamPage />} />

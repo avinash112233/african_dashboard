@@ -13,9 +13,9 @@ const HomePage = () => {
               <p className="lead mb-4">
                 Comprehensive aerosol monitoring and data visualization platform for Africa
               </p>
-              <Button as={Link} to="/dashboard" variant="primary" size="lg">
-                Explore Dashboard
-              </Button>
+              <Link to="/dashboard" className="text-decoration-none">
+                <Button variant="primary" size="lg">Explore Dashboard</Button>
+              </Link>
             </div>
           </Col>
         </Row>
@@ -31,9 +31,9 @@ const HomePage = () => {
                   Interactive maps with point locations, heat maps, and satellite imagery. 
                   Analyze timeseries data with scatter plots and bar charts.
                 </Card.Text>
-                <Button as={Link} to="/dashboard" variant="outline-primary">
-                  View Visualizations
-                </Button>
+                <Link to="/dashboard" className="text-decoration-none">
+                  <Button variant="outline-primary">View Visualizations</Button>
+                </Link>
               </Card.Body>
             </Card>
           </Col>
@@ -48,9 +48,9 @@ const HomePage = () => {
                   Select datasets and parameters to download in CSV or NetCDF format. 
                   Access historical and real-time aerosol data.
                 </Card.Text>
-                <Button as={Link} to="/data-download" variant="outline-primary">
-                  Download Data
-                </Button>
+                <Link to="/data-download" className="text-decoration-none">
+                  <Button variant="outline-primary">Download Data</Button>
+                </Link>
               </Card.Body>
             </Card>
           </Col>
@@ -65,9 +65,9 @@ const HomePage = () => {
                   Browse our research publications and learn about the latest findings 
                   in aerosol monitoring and climate research.
                 </Card.Text>
-                <Button as={Link} to="/publications" variant="outline-primary">
-                  View Publications
-                </Button>
+                <Link to="/publications" className="text-decoration-none">
+                  <Button variant="outline-primary">View Publications</Button>
+                </Link>
               </Card.Body>
             </Card>
           </Col>

@@ -10,7 +10,7 @@ const Navigation = () => {
   };
 
   return (
-    <Navbar bg="light" expand="lg" className="navbar-custom">
+    <Navbar expand="lg" className="navbar-custom">
       <Container fluid>
         <Navbar.Brand as={Link} to="/">
           African Aerosol Dashboard

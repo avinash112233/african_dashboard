@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Form, Button, Row, Col, Card } from 'react-bootstrap';
+import { Form, Button, Row, Col } from 'react-bootstrap';
 import Papa from 'papaparse';
 
 interface DataDownloadFormProps {
@@ -121,7 +121,7 @@ const DataDownloadForm = ({ onDownloadStatus }: DataDownloadFormProps) => {
             <Form.Control
               type="date"
               value={dateRange.start}
-              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDateRange({ ...dateRange, start: e.target.value })}
             />
           </Form.Group>
         </Col>
@@ -131,7 +131,7 @@ const DataDownloadForm = ({ onDownloadStatus }: DataDownloadFormProps) => {
             <Form.Control
               type="date"
               value={dateRange.end}
-              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDateRange({ ...dateRange, end: e.target.value })}
             />
           </Form.Group>
         </Col>
@@ -139,7 +139,7 @@ const DataDownloadForm = ({ onDownloadStatus }: DataDownloadFormProps) => {
 
       <Form.Group className="mb-3">
         <Form.Label>Download Format</Form.Label>
-        <Form.Select value={format} onChange={(e) => setFormat(e.target.value as 'csv' | 'netcdf')}>
+        <Form.Select value={format} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFormat(e.target.value as 'csv' | 'netcdf')}>
           <option value="csv">CSV (Comma-Separated Values)</option>
           <option value="netcdf">NetCDF (Network Common Data Form)</option>
         </Form.Select>

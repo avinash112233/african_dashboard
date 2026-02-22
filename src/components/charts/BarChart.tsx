@@ -22,7 +22,7 @@ interface BarChartProps {
   data?: any;
 }
 
-const BarChart = ({ data }: BarChartProps) => {
+const BarChart = ({ data: _data }: BarChartProps) => {
   // Sample data - replace with actual API data
   const defaultLabels = ['Nairobi', 'Lagos', 'Johannesburg', 'Cairo', 'Lusaka'];
   const defaultValues = [0.45, 0.52, 0.38, 0.61, 0.41];

@@ -21,23 +21,23 @@ ChartJS.register(
 );
 
 interface ScatterPlotChartProps {
-  data?: any;
+  data?: { date: string; AOD_500nm?: number; AOD_675nm?: number; AOD_870nm?: number; AOD_1020nm?: number }[];
 }
 
 const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
-  // Sample data - replace with actual API data
-  const generateSampleData = () => {
-    return Array.from({ length: 50 }, () => ({
-      x: Math.random() * 100,
-      y: Math.random() * 1,
-    }));
-  };
+  const hasData = data && data.length > 0 && data.some((d) => (d.AOD_500nm ?? d.AOD_675nm) != null);
+  const points = hasData
+    ? data!.map((d) => ({
+        x: d.AOD_500nm ?? d.AOD_675nm ?? 0,
+        y: d.AOD_675nm ?? d.AOD_870nm ?? d.AOD_500nm ?? 0,
+      })).filter((p) => !isNaN(p.x) && !isNaN(p.y))
+    : Array.from({ length: 30 }, (_, i) => ({ x: i * 0.02 + 0.2, y: Math.random() * 0.3 + 0.1 }));
 
   const chartData = {
     datasets: [
       {
-        label: 'AOD vs PM2.5',
-        data: generateSampleData(),
+        label: 'Spectral AOD Correlation (AOD 500nm vs 675nm)',
+        data: points,
         backgroundColor: 'rgba(255, 99, 132, 0.5)',
         borderColor: 'rgba(255, 99, 132, 1)',
       },
@@ -61,13 +61,13 @@ const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
         beginAtZero: true,
         title: {
           display: true,
-          text: 'AOD',
+          text: 'AOD 675nm',
         },
       },
       x: {
         title: {
           display: true,
-          text: 'PM2.5 (μg/m³)',
+          text: 'AOD 500nm',
         },
       },
     },
