@@ -139,13 +139,14 @@ function wfsFeatureToFirePoint(f: WFSFireFeature): FIRMSFirePoint | null {
 /**
  * Fetch VIIRS NOAA-21 7-day fire hotspots from WFS (regional shapefile-backed data).
  * Uses Northern_and_Central_Africa + Southern_Africa layers for faster loading.
+ * Falls back to CSV Area API if WFS fails (500, network error, etc.).
  */
 export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
   if (!FIRMS_KEY) {
     console.warn('[FIRMS] No VITE_FIRMS_MAP_KEY in .env');
     return [];
   }
-  const layer = 'fires_noaa21_7days';
+  const layer = 'ms:fires_noaa21_7days';
   const base = `${API_BASE}/mapserver/wfs`;
   const regions = ['Northern_and_Central_Africa', 'Southern_Africa'] as const;
   const params = new URLSearchParams({
@@ -174,7 +175,7 @@ export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
     }
     return results;
   } catch (err) {
-    console.error('[FIRMS WFS] Error:', err);
-    return [];
+    console.warn('[FIRMS WFS] Failed, falling back to CSV API:', err);
+    return getNOAA20VIIRS7DayDataset();
   }
 }

@@ -40,6 +40,11 @@ export default defineConfig({
         secure: true,
         rewrite: (path) => path.replace(/^\/api\/gibs/, ''),
       },
+      // Proxy MERRA2 API to backend (run `npm run api` for real GES DISC data)
+      '^/api/merra2': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
       // Proxy FIRMS API requests to avoid CORS issues
       '^/api/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',

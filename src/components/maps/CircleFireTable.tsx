@@ -7,9 +7,10 @@ import type { FIRMSFirePoint } from '../../services/firmsApi';
 interface CircleFireTableProps {
   points: FIRMSFirePoint[];
   onFireClick?: (fire: FIRMSFirePoint) => void;
+  onClose?: () => void;
 }
 
-export default function CircleFireTable({ points, onFireClick }: CircleFireTableProps) {
+export default function CircleFireTable({ points, onFireClick, onClose }: CircleFireTableProps) {
   const maxRows = 500;
 
   return (
@@ -37,10 +38,37 @@ export default function CircleFireTable({ points, onFireClick }: CircleFireTable
           fontSize: 13,
           fontWeight: 600,
           borderBottom: '1px solid rgba(255,255,255,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
         }}
       >
+        <span>
           VIIRS NOAA-21 [375m] • {points.length} point{points.length !== 1 ? 's' : ''} in selection
-        {points.length > maxRows && ` (showing first ${maxRows})`}
+          {points.length > maxRows && ` (showing first ${maxRows})`}
+        </span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              flexShrink: 0,
+              background: 'rgba(255,255,255,0.15)',
+              border: 'none',
+              color: '#fff',
+              borderRadius: 4,
+              width: 28,
+              height: 28,
+              cursor: 'pointer',
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        )}
       </div>
       <div style={{ overflowY: 'auto', maxHeight: 260, fontSize: 11 }}>
         {points.length === 0 ? (

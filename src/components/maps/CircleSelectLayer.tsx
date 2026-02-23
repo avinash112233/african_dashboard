@@ -3,7 +3,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import L from 'leaflet';
 import { Circle, useMap, useMapEvents } from 'react-leaflet';
 
 const CIRCLE_PANE = 'circleSelectPane';

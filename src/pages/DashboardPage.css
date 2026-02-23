@@ -51,6 +51,11 @@
   margin: 4px 0 12px 0;
 }
 
+.layer-tip-warn {
+  color: #b45309;
+  margin-top: -8px;
+}
+
 .dashboard-map-area {
   flex: 1;
   position: relative;
@@ -84,6 +89,17 @@
   padding: 20px;
   max-height: 520px;
   overflow-y: auto;
+}
+
+.charts-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.charts-section-header h6 {
+  margin: 0;
 }
 
 .charts-section h6 {
@@ -394,22 +410,23 @@
 }
 
 .aod-classification-legend {
-  font-size: 11px;
-  color: #64748b;
-  margin-top: 12px;
-  padding: 10px 12px;
+  font-size: 14px;
+  color: #334155;
+  margin-top: 16px;
+  padding: 14px 16px;
   background: #f8fafc;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid #e2e8f0;
 }
 
 .aod-classification-legend strong {
   display: block;
-  margin-bottom: 6px;
-  font-size: 11px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #475569;
+  color: #1e293b;
 }
 
 .aod-classification-legend ul {
@@ -421,8 +438,9 @@
 .aod-classification-legend li {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 14px;
 }
 
 .aod-classification-legend li:last-child {
@@ -431,9 +449,9 @@
 
 .aod-legend-swatch {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
   flex-shrink: 0;
 }
 

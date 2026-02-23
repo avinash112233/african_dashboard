@@ -7,6 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import CanvasFireLayer from './CanvasFireLayer';
 import ViewportFirePanel from './ViewportFirePanel';
 import AODHeatMapLayer from './AODHeatMapLayer';
+import PM25HeatMapLayer from './PM25HeatMapLayer';
 import './MapVisualization.css';
 import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
@@ -26,6 +27,10 @@ interface MapVisualizationProps {
   showAeronet: boolean;
   showAODHeatMap?: boolean;
   showVIIRSImagery?: boolean;
+  showMERRA2PM25?: boolean;
+  onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
+  onMerra2LoadingChange?: (loading: boolean) => void;
+  onMerra2SourceChange?: (source: 'gesdisc' | 'sample') => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
   onAeronetSiteClick?: (site: AERONETSite) => void;
   selectedDate?: string;
@@ -33,6 +38,7 @@ interface MapVisualizationProps {
   circleRadiusKm?: number;
   circleSelectActive?: boolean;
   onCircleCenterChange?: (lat: number, lng: number) => void;
+  onCircleClose?: () => void;
   pointsInCircle?: FIRMSFirePoint[];
 }
 
@@ -44,6 +50,10 @@ const MapVisualization = ({
   showAeronet,
   showAODHeatMap = false,
   showVIIRSImagery = false,
+  showMERRA2PM25 = false,
+  onPm25Sample,
+  onMerra2LoadingChange,
+  onMerra2SourceChange,
   onFireClick,
   onAeronetSiteClick,
   selectedDate = new Date().toISOString().slice(0, 10),
@@ -51,6 +61,7 @@ const MapVisualization = ({
   circleRadiusKm = 25,
   circleSelectActive = false,
   onCircleCenterChange,
+  onCircleClose,
   pointsInCircle = [],
 }: MapVisualizationProps) => {
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -140,6 +151,16 @@ const MapVisualization = ({
         <AODHeatMapLayer aeronetSites={aeronetSites} siteAodMap={siteAodMap} />
       )}
 
+      {showMERRA2PM25 && (
+        <PM25HeatMapLayer
+          date={selectedDate}
+          opacity={0.65}
+          onPm25Sample={onPm25Sample}
+          onLoadingChange={onMerra2LoadingChange}
+          onSourceChange={onMerra2SourceChange}
+        />
+      )}
+
       {(showFires || showAeronet) && (
         <>
           <CanvasFireLayer
@@ -159,7 +180,7 @@ const MapVisualization = ({
             />
           )}
           {showFires && circleCenter && (
-            <CircleFireTable points={pointsInCircle} onFireClick={onFireClick} />
+            <CircleFireTable points={pointsInCircle} onFireClick={onFireClick} onClose={onCircleClose} />
           )}
           {showFires && !circleCenter && (
             <ViewportFirePanel
