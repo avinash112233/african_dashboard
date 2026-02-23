@@ -1,3 +1,24 @@
+# African Aerosol Dashboard
+
+React + TypeScript + Vite dashboard for African aerosol data (AERONET, VIIRS fires, VIIRS imagery, MERRA2 PM2.5).
+
+## MERRA2 PM2.5 backend (real data)
+
+For real MERRA2 PM2.5 from NASA GES DISC:
+
+1. Create an [Earthdata Login](https://urs.earthdata.nasa.gov/) account.
+2. Copy `.env.example` to `.env` and add your credentials:
+   ```
+   EARTHDATA_USERNAME=your_username
+   EARTHDATA_PASSWORD=your_password
+   ```
+3. In one terminal: `npm run api` (backend on port 3001).
+4. In another: `npm run dev` (frontend proxies `/api/merra2` to the backend).
+
+If the backend is not running, the app uses sample data. In production, deploy the backend separately and point the frontend to it.
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

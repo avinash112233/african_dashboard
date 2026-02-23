@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import MapVisualization from '../components/maps/MapVisualization';
-import { getNOAA20VIIRS7DayDataset } from '../services/firmsApi';
+import { getNOAA21VIIRS7DayFromWFS } from '../services/firmsApi';
 import { getAfricanAERONETSites, getAERONETData, getAERONETDataAfrica, type AERONETDataPoint, type SiteAODMap } from '../services/aeronetApi';
 import type { FIRMSFirePoint } from '../services/firmsApi';
 import type { AERONETSite } from '../services/aeronetApi';
 import { TimeSeriesChart, ScatterPlotChart, WavelengthBarChart } from '../components/charts';
-import { normalizeAeronetDate, formatDisplayDate, formatDateMonthDayYear } from '../utils/dateFormat';
+import { normalizeAeronetDate, formatDateMonthDayYear } from '../utils/dateFormat';
 import { computeDailyMeanAOD, getAODLevelColor, getAODLevelLabel, AOD_CLASSIFICATION_LEGEND } from '../utils/aodUtils';
+import { haversineKm } from '../utils/geoUtils';
+import type { PM25Sample } from '../components/maps/PM25HeatMapLayer';
 import './DashboardPage.css';
 
 interface SelectedFireData {
@@ -37,10 +39,17 @@ const DashboardPage = () => {
   const [showFires, setShowFires] = useState(false);
   const [showAODHeatMap, setShowAODHeatMap] = useState(false);
   const [showVIIRSImagery, setShowVIIRSImagery] = useState(false);
+  const [showMERRA2PM25, setShowMERRA2PM25] = useState(false);
+  const [selectedPm25, setSelectedPm25] = useState<PM25Sample | null>(null);
+  const [circleSelectActive, setCircleSelectActive] = useState(false);
+  const [circleCenter, setCircleCenter] = useState<[number, number] | null>(null);
+  const [circleRadiusKm, setCircleRadiusKm] = useState(25);
   const [fireLoading, setFireLoading] = useState(false);
+  const [merra2Loading, setMerra2Loading] = useState(false);
+  const [merra2DataSource, setMerra2DataSource] = useState<'gesdisc' | 'sample' | null>(null);
   const [aeronetLoading, setAeronetLoading] = useState(false);
   const [aeronetError, setAeronetError] = useState<string | null>(null);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -48,10 +57,10 @@ const DashboardPage = () => {
 
   useEffect(() => {
     setFireLoading(true);
-    getNOAA20VIIRS7DayDataset()
+    getNOAA21VIIRS7DayFromWFS()
       .then(setFirePoints)
       .finally(() => setFireLoading(false));
-  }, []);
+  }, [selectedDate]);
 
   useEffect(() => {
     if (selectedSite) {
@@ -68,12 +77,17 @@ const DashboardPage = () => {
   }, [selectedDate, selectedSite?.site, selectedSite?.name]);
 
   useEffect(() => {
-    if (showAeronet) {
+    if (showAeronet || showAODHeatMap) {
       const start = selectedDate.subtract(6, 'day').format('YYYY-MM-DD');
       const end = selectedDate.format('YYYY-MM-DD');
       getAERONETDataAfrica(start, end).then(setSiteAodMap);
     }
-  }, [selectedDate, showAeronet]);
+  }, [selectedDate, showAeronet, showAODHeatMap]);
+
+  const handlePm25Sample = (sample: PM25Sample | null) => {
+    setSelectedPm25(sample);
+    if (sample) setRightPanelOpen(true);
+  };
 
   useEffect(() => {
     setAeronetLoading(true);
@@ -88,10 +102,27 @@ const DashboardPage = () => {
       .finally(() => setAeronetLoading(false));
   }, []);
 
+  const pointsInCircle = (() => {
+    if (!circleCenter) return [];
+    const inCircle = firePoints.filter((p) => {
+      if (isNaN(p.latitude) || isNaN(p.longitude)) return false;
+      return haversineKm(circleCenter[0], circleCenter[1], p.latitude, p.longitude) <= circleRadiusKm;
+    });
+    // Deduplicate by lat/lon + acquire_time
+    const seen = new Set<string>();
+    return inCircle.filter((p) => {
+      const key = `${p.latitude.toFixed(6)}_${p.longitude.toFixed(6)}_${p.acq_date}_${p.acq_time ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  })();
+
   const handleAeronetSiteClick = (site: AERONETSite) => {
     setSelectedSite(site);
     setSelectedFire(null);
     setChartData([]);
+    setRightPanelOpen(true);
   };
 
   const exportAODCSV = () => {
@@ -113,6 +144,7 @@ const DashboardPage = () => {
   const handleFireClick = (fire: FIRMSFirePoint) => {
     setSelectedSite(null);
     setChartData([]);
+    setRightPanelOpen(true);
     setSelectedFire({
       latitude: fire.latitude,
       longitude: fire.longitude,
@@ -158,31 +190,76 @@ const DashboardPage = () => {
               </label>
               {showAeronet && aeronetSites.length > 0 && (
                 <>
-                <select
-                  className="site-select"
-                  value={selectedSite?.site ?? ''}
-                  onChange={(e) => {
-                    const site = aeronetSites.find((s) => s.site === e.target.value);
-                    if (site) handleAeronetSiteClick(site);
-                  }}
-                >
-                  <option value="">Select a site...</option>
-                  {aeronetSites.map((s) => (
-                    <option key={s.site} value={s.site}>{s.name ?? s.site}</option>
-                  ))}
-                </select>
-                <small className="layer-tip">Gray = no data · Color = AOD level (green→yellow→orange→red)</small>
+                  <select
+                    className="site-select"
+                    value={selectedSite?.site ?? ''}
+                    onChange={(e) => {
+                      const site = aeronetSites.find((s) => s.site === e.target.value);
+                      if (site) handleAeronetSiteClick(site);
+                    }}
+                  >
+                    <option value="">Select a site...</option>
+                    {aeronetSites.map((s) => (
+                      <option key={s.site} value={s.site}>{s.name ?? s.site}</option>
+                    ))}
+                  </select>
+                  <small className="layer-tip">Gray = no data · Color = AOD level (green→yellow→orange→red)</small>
                 </>
               )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
                   checked={showFires}
-                  onChange={(e) => setShowFires(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setShowFires(checked);
+                    if (checked) setShowAODHeatMap(false);
+                    if (!checked) setCircleSelectActive(false);
+                  }}
+                  disabled={fireLoading}
                 />
-                Fire Hotspots (VIIRS)
+                Fire Hotspots (VIIRS) {fireLoading && '(loading…)'}
               </label>
-              <small className="layer-tip">Tip: Zoom in (level 7+) to see table of fire points in view</small>
+              {showFires && (
+                <>
+                  <label className="layer-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={circleSelectActive}
+                      onChange={(e) => setCircleSelectActive(e.target.checked)}
+                    />
+                    Select area (click map to draw circle)
+                  </label>
+                  {circleSelectActive && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                      <label style={{ fontSize: 12 }}>
+                        Radius (km):{' '}
+                        <select
+                          value={circleRadiusKm}
+                          onChange={(e) => setCircleRadiusKm(Number(e.target.value))}
+                          style={{ padding: '2px 6px', fontSize: 12 }}
+                        >
+                          {[5, 10, 25, 50, 100].map((r) => (
+                            <option key={r} value={r}>{r} km</option>
+                          ))}
+                        </select>
+                      </label>
+                      {circleCenter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCircleCenter(null);
+                            setCircleSelectActive(false);
+                          }}
+                          style={{ padding: '2px 8px', fontSize: 11 }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -191,6 +268,9 @@ const DashboardPage = () => {
                 />
                 AOD Heat Map
               </label>
+              {showAODHeatMap && (
+                <small className="layer-tip">Green→Yellow→Orange→Red by AOD (AERONET 7d)</small>
+              )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -199,27 +279,54 @@ const DashboardPage = () => {
                 />
                 VIIRS Imagery
               </label>
-              <label className="layer-checkbox layer-disabled">
-                <input type="checkbox" disabled />
-                MERRA2 PM2.5 (Coming soon)
-              </label>
-              {showAeronet && (
-                <div className="aod-classification-legend">
-                  <strong>AOD Classification:</strong>
-                  <ul>
-                    {AOD_CLASSIFICATION_LEGEND.map(({ range, label, color }) => (
-                      <li key={range}>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: color }} />
-                        {range} → {label}
-                      </li>
-                    ))}
-                    <li>
-                      <span className="aod-legend-swatch" style={{ backgroundColor: 'rgba(128, 128, 128, 0.8)' }} />
-                      No AOD data
-                    </li>
-                  </ul>
-                </div>
+              {showVIIRSImagery && (
+                <small className="layer-tip">NASA GIBS · True Color (S-NPP) · Uses selected date</small>
               )}
+              <label className="layer-checkbox">
+                <input
+                  type="checkbox"
+                  checked={showMERRA2PM25}
+                  onChange={(e) => {
+                    setShowMERRA2PM25(e.target.checked);
+                    if (!e.target.checked) {
+                      setMerra2DataSource(null);
+                      setMerra2Loading(false);
+                    }
+                  }}
+                />
+                MERRA2 PM2.5 {merra2Loading && '(loading…)'}
+              </label>
+              {showMERRA2PM25 && (
+                <>
+                  <small className="layer-tip">Surface PM2.5 · GES DISC HAQAST (2000–2024) · Uses selected date</small>
+                  {selectedDate.year() > 2024 && (
+                    <small className="layer-tip layer-tip-warn">
+                      ⚠ Date outside 2000–2024 range.{' '}
+                      {merra2DataSource === 'gesdisc'
+                        ? 'Showing nearest available date.'
+                        : 'Showing sample data.'}
+                    </small>
+                  )}
+                  {merra2DataSource === 'sample' && selectedDate.year() <= 2024 && (
+                    <small className="layer-tip layer-tip-warn">⚠ Backend offline. Showing sample data.</small>
+                  )}
+                </>
+              )}
+              <div className="aod-classification-legend">
+                <strong>AOD Classification:</strong>
+                <ul>
+                  {AOD_CLASSIFICATION_LEGEND.map(({ range, label, color }) => (
+                    <li key={range}>
+                      <span className="aod-legend-swatch" style={{ backgroundColor: color }} />
+                      {range} → {label}
+                    </li>
+                  ))}
+                  <li>
+                    <span className="aod-legend-swatch" style={{ backgroundColor: 'rgba(128, 128, 128, 0.8)' }} />
+                    No AOD data
+                  </li>
+                </ul>
+              </div>
             </div>
           </aside>
 
@@ -232,9 +339,14 @@ const DashboardPage = () => {
             )}
             {fireLoading && (
               <div className="map-loading-overlay">
-                <div className="spinner-border text-primary" role="status">
-                  <span className="visually-hidden">Loading fire data...</span>
-                </div>
+                <div className="spinner-border text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text">Loading fire hotspots…</p>
+              </div>
+            )}
+            {merra2Loading && !fireLoading && (
+              <div className="map-loading-overlay">
+                <div className="spinner-border text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text">Loading PM2.5 data…</p>
               </div>
             )}
             <div className="map-container">
@@ -252,17 +364,42 @@ const DashboardPage = () => {
                 showAeronet={showAeronet}
                 showAODHeatMap={showAODHeatMap}
                 showVIIRSImagery={showVIIRSImagery}
+                showMERRA2PM25={showMERRA2PM25}
+                onPm25Sample={handlePm25Sample}
+                onMerra2LoadingChange={setMerra2Loading}
+                onMerra2SourceChange={setMerra2DataSource}
+                selectedDate={
+                  selectedDate.isAfter(dayjs(), 'day')
+                    ? dayjs().format('YYYY-MM-DD')
+                    : selectedDate.format('YYYY-MM-DD')
+                }
                 onFireClick={handleFireClick}
                 onAeronetSiteClick={handleAeronetSiteClick}
-                selectedDate={selectedDate.format('YYYY-MM-DD')}
+                circleCenter={circleCenter}
+                circleRadiusKm={circleRadiusKm}
+                circleSelectActive={circleSelectActive}
+                onCircleCenterChange={(lat, lng) => setCircleCenter([lat, lng])}
+                onCircleClose={() => {
+                  setCircleCenter(null);
+                  setCircleSelectActive(false);
+                }}
+                pointsInCircle={pointsInCircle}
               />
             </div>
-            {showAeronet && (selectedSite ? (chartLoading || chartData.length > 0) : true) && (
+            {showAeronet && selectedSite && (
               <div className="charts-section">
-                <h6>Time Series Analysis</h6>
-                {!selectedSite ? (
-                  <p className="chart-placeholder">Click an AERONET site on the map or select one from the dropdown to view time series.</p>
-                ) : chartLoading ? (
+                <div className="charts-section-header">
+                  <h6>Time Series Analysis</h6>
+                  <button
+                    type="button"
+                    className="panel-close-btn"
+                    onClick={() => setSelectedSite(null)}
+                    aria-label="Close Time Series Analysis"
+                  >
+                    ×
+                  </button>
+                </div>
+                {chartLoading ? (
                   <div className="chart-loading-box">
                     <div className="chart-loading-spinner" />
                     <p className="chart-loading">Loading AOD data for {selectedSite.name ?? selectedSite.site}…</p>
@@ -294,8 +431,8 @@ const DashboardPage = () => {
             )}
           </main>
 
-          {/* Right sidebar - Selected Data */}
-          {!rightPanelOpen && (
+          {/* Right sidebar - Selected Data (show reopen only when something is selected) */}
+          {!rightPanelOpen && (selectedSite || selectedFire || selectedPm25) && (
             <button
               type="button"
               className="panel-reopen-btn"
@@ -389,7 +526,7 @@ const DashboardPage = () => {
                   </div>
                 ) : selectedFire ? (
                   <div className="selected-fire-details">
-                    <p className="data-source">VIIRS / NOAA-20 [375m]</p>
+                    <p className="data-source">VIIRS / NOAA-21 [375m]</p>
                     <table className="selected-data-table">
                       <tbody>
                         <tr><td>LATITUDE</td><td>{selectedFire.latitude.toFixed(5)}</td></tr>
@@ -407,7 +544,23 @@ const DashboardPage = () => {
                         <tr><td>DAYNIGHT</td><td>{selectedFire.daynight === 'D' ? 'D' : selectedFire.daynight === 'N' ? 'N' : selectedFire.daynight}</td></tr>
                       </tbody>
                     </table>
-                    <p className="data-source-footer">Source: NASA FIRMS (VIIRS)</p>
+                    <p className="data-source-footer">Source: NASA FIRMS (VIIRS NOAA-21)</p>
+                  </div>
+                ) : selectedPm25 ? (
+                  <div className="selected-pm25-details">
+                    <p className="data-source">MERRA2 PM2.5 (CNN HAQAST)</p>
+                    <table className="selected-data-table">
+                      <tbody>
+                        <tr><td>PM2.5 ({selectedPm25.units})</td><td><strong>{selectedPm25.value.toFixed(2)}</strong></td></tr>
+                        <tr><td>LAT / LON</td><td className="coord-cell">{selectedPm25.lat.toFixed(5)}, {selectedPm25.lon.toFixed(5)}</td></tr>
+                        <tr><td>DATE</td><td>{formatDateMonthDayYear(selectedPm25.date)}</td></tr>
+                        <tr><td>RANGE (min–max)</td><td>{selectedPm25.min.toFixed(1)} – {selectedPm25.max.toFixed(1)} {selectedPm25.units}</td></tr>
+                      </tbody>
+                    </table>
+                    <p className="data-source-footer">
+                      {selectedPm25.source === 'sample' ? '⚠ Sample data · ' : 'Source: NASA GES DISC · '}
+                      Click or hover on the PM2.5 layer for values
+                    </p>
                   </div>
                 ) : (
                   <p className="text-muted">Click a marker on the map or select a site from the left sidebar to view data.</p>

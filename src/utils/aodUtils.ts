@@ -49,7 +49,7 @@ export function computeDailyMeanAOD(data: AODPoint[]): AODPoint[] {
       const out: AODPoint = { date };
       for (const k of keys) {
         const n = counts[k] ?? 0;
-        if (n > 0) (out as Record<string, number>)[k] = (sums[k] ?? 0) / n;
+        if (n > 0) (out as unknown as Record<string, number>)[k] = (sums[k] ?? 0) / n;
       }
       return out;
     });
