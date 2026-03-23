@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "api": "node server/index.js"
+    "backend": "node server/index.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

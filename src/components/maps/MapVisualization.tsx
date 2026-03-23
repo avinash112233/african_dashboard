@@ -5,12 +5,13 @@ import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
 import 'leaflet/dist/leaflet.css';
 import CanvasFireLayer from './CanvasFireLayer';
-import ViewportFirePanel from './ViewportFirePanel';
-import AODHeatMapLayer from './AODHeatMapLayer';
 import PM25HeatMapLayer from './PM25HeatMapLayer';
 import './MapVisualization.css';
 import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
+
+const EMPTY_FIRE_POINTS: FIRMSFirePoint[] = [];
+const EMPTY_AERONET_SITES: AERONETSite[] = [];
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -25,7 +26,6 @@ interface MapVisualizationProps {
   siteAodMap?: SiteAODMap;
   showFires: boolean;
   showAeronet: boolean;
-  showAODHeatMap?: boolean;
   showVIIRSImagery?: boolean;
   showMERRA2PM25?: boolean;
   onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
@@ -48,7 +48,6 @@ const MapVisualization = ({
   siteAodMap = {},
   showFires,
   showAeronet,
-  showAODHeatMap = false,
   showVIIRSImagery = false,
   showMERRA2PM25 = false,
   onPm25Sample,
@@ -58,7 +57,7 @@ const MapVisualization = ({
   onAeronetSiteClick,
   selectedDate = new Date().toISOString().slice(0, 10),
   circleCenter = null,
-  circleRadiusKm = 25,
+  circleRadiusKm = 5,
   circleSelectActive = false,
   onCircleCenterChange,
   onCircleClose,
@@ -84,21 +83,14 @@ const MapVisualization = ({
     }
   }, [showVIIRSImagery, selectedDate]);
 
-  // Africa bounds: restrict map view to continent (Cape Agulhas to Tunisia, Cape Verde to Somalia)
-  const africaBounds: [[number, number], [number, number]] = [
-    [-35, -18], // SW
-    [37.3, 51.5], // NE
-  ];
-
   return (
     <MapContainer
       center={[5, 20]}
       zoom={5}
-      minZoom={3}
-      maxBounds={africaBounds}
-      maxBoundsViscosity={0.7}
+      minZoom={2}
       style={{ height: '100%', width: '100%', minHeight: '400px' }}
       scrollWheelZoom
+      preferCanvas
     >
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="OpenStreetMap">
@@ -147,10 +139,6 @@ const MapVisualization = ({
         />
       )}
 
-      {showAODHeatMap && (
-        <AODHeatMapLayer aeronetSites={aeronetSites} siteAodMap={siteAodMap} />
-      )}
-
       {showMERRA2PM25 && (
         <PM25HeatMapLayer
           date={selectedDate}
@@ -164,9 +152,9 @@ const MapVisualization = ({
       {(showFires || showAeronet) && (
         <>
           <CanvasFireLayer
-            firePoints={showFires ? firePoints : []}
+            firePoints={showFires ? firePoints : EMPTY_FIRE_POINTS}
             onFireClick={onFireClick}
-            aeronetSites={showAeronet ? aeronetSites : []}
+            aeronetSites={showAeronet ? aeronetSites : EMPTY_AERONET_SITES}
             siteAodMap={siteAodMap}
             onAeronetSiteClick={onAeronetSiteClick}
             allowPointerEvents={!circleSelectActive}
@@ -181,13 +169,6 @@ const MapVisualization = ({
           )}
           {showFires && circleCenter && (
             <CircleFireTable points={pointsInCircle} onFireClick={onFireClick} onClose={onCircleClose} />
-          )}
-          {showFires && !circleCenter && (
-            <ViewportFirePanel
-              firePoints={firePoints}
-              onFireClick={onFireClick}
-              minZoomToShow={7}
-            />
           )}
         </>
       )}

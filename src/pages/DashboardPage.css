@@ -13,6 +13,7 @@
 .dashboard-sidebar-left {
   width: 260px;
   min-width: 260px;
+  flex-shrink: 0;
   background: #fff;
   padding: 16px;
   border-right: 1px solid #e0e0e0;
@@ -54,6 +55,13 @@
 .layer-tip-warn {
   color: #b45309;
   margin-top: -8px;
+}
+
+.aeronet-date-range {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px 0;
 }
 
 .dashboard-map-area {
@@ -144,7 +152,7 @@
 }
 
 .chart-container {
-  height: 220px;
+  height: 240px;
   margin-bottom: 8px;
 }
 
@@ -205,10 +213,26 @@
   gap: 12px;
 }
 
+.map-loading-overlay--bottom-right {
+  top: auto;
+  bottom: 46px; /* avoid overlapping Leaflet attribution in bottom-right */
+  right: 16px;
+  left: auto;
+  transform: none;
+  gap: 6px;
+  pointer-events: none; /* don't block map interactions */
+  align-items: center;
+}
+
 .map-loading-text {
   margin: 0;
   font-size: 14px;
   color: #333;
+}
+
+.map-loading-text--small {
+  font-size: 12px;
+  color: #4b5563;
 }
 
 .dashboard-sidebar-right {

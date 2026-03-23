@@ -25,13 +25,16 @@ interface ScatterPlotChartProps {
 }
 
 const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
-  const hasData = data && data.length > 0 && data.some((d) => (d.AOD_500nm ?? d.AOD_675nm) != null);
-  const points = hasData
-    ? data!.map((d) => ({
-        x: d.AOD_500nm ?? d.AOD_675nm ?? 0,
-        y: d.AOD_675nm ?? d.AOD_870nm ?? d.AOD_500nm ?? 0,
-      })).filter((p) => !isNaN(p.x) && !isNaN(p.y))
-    : Array.from({ length: 30 }, (_, i) => ({ x: i * 0.02 + 0.2, y: Math.random() * 0.3 + 0.1 }));
+  const hasData = !!data && data.some((d) => d.AOD_500nm != null && d.AOD_675nm != null && !isNaN(d.AOD_500nm as number) && !isNaN(d.AOD_675nm as number));
+  const points =
+    hasData && data
+      ? data
+          .map((d) => ({
+            x: d.AOD_500nm as number | undefined,
+            y: d.AOD_675nm as number | undefined,
+          }))
+          .filter((p) => p.x != null && p.y != null && !isNaN(p.x) && !isNaN(p.y))
+      : [];
 
   const chartData = {
     datasets: [
@@ -72,6 +75,14 @@ const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
       },
     },
   };
+
+  if (!hasData) {
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>
+        No AOD data in this range.
+      </div>
+    );
+  }
 
   return <Scatter data={chartData} options={options} />;
 };

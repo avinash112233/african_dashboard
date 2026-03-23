@@ -1,14 +1,17 @@
 /**
- * PM25HeatMapLayer – canvas overlay for MERRA2 PM2.5 grid
- * Renders fast via ImageOverlay and supports click/hover value sampling.
+ * PM25HeatMapLayer – point-based MERRA2 PM2.5 visualization
+ * Converts the grid to sampled circle markers (like AERONET) for a lighter,
+ * consistent visualization. Uses a LayerGroup and L.circleMarker with shared canvas renderer.
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { getMERRA2PM25Grid, type MERRA2PM25GridResponse } from '../../services/merra2Api';
 
-/** PM2.5 color gradient: green → yellow → orange → red */
+const SAMPLE_STEP = 5;
+
+/** PM2.5 color gradient: green (low) → yellow → orange → red (high) */
 const PM25_GRADIENT: Record<number, string> = {
   0.0: '#16a34a',
   0.2: '#84cc16',
@@ -18,8 +21,8 @@ const PM25_GRADIENT: Record<number, string> = {
   1.0: '#7f1d1d',
 };
 
-function valueToColor(value: number, min: number, max: number, noDataValue: number): string {
-  if (value === noDataValue || value == null || isNaN(value)) return 'rgba(0,0,0,0)';
+function valueToColor(value: number, min: number, max: number, noDataValue: number): string | null {
+  if (value === noDataValue || value == null || isNaN(value)) return null;
   if (min >= max) return '#94a3b8';
   const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
   let lowKey = 0;
@@ -42,52 +45,43 @@ function valueToColor(value: number, min: number, max: number, noDataValue: numb
   return `rgb(${r},${g},${b})`;
 }
 
-function renderGridToCanvas(
-  grid: MERRA2PM25GridResponse,
-  canvas: HTMLCanvasElement,
-  opacity: number
-) {
-  const { width, height, values, min, max, noDataValue } = grid;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  canvas.width = width;
-  canvas.height = height;
-  const imgData = ctx.createImageData(width, height);
-
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    const col = valueToColor(v, min, max, noDataValue);
-    const base = i * 4;
-    if (col === 'rgba(0,0,0,0)') {
-      imgData.data[base] = 0;
-      imgData.data[base + 1] = 0;
-      imgData.data[base + 2] = 0;
-      imgData.data[base + 3] = 0;
-    } else {
-      const m = col.match(/rgb\((\d+),(\d+),(\d+)\)/);
-      if (m) {
-        imgData.data[base] = parseInt(m[1], 10);
-        imgData.data[base + 1] = parseInt(m[2], 10);
-        imgData.data[base + 2] = parseInt(m[3], 10);
-        imgData.data[base + 3] = Math.round(opacity * 255);
-      }
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
+interface SampledPoint {
+  lat: number;
+  lon: number;
+  value: number;
 }
 
-function latLonToIndex(
-  lat: number,
-  lon: number,
+/** Approx meters per degree at equator; used for geographic circle radius */
+const METERS_PER_DEG_LAT = 111000;
+
+/**
+ * Convert grid to sampled points. Each point stores PM2.5 from values[row * width + col].
+ * Cell (row, col) center: lat = north - (row + 0.5) * latStep, lon = west + (col + 0.5) * lonStep.
+ * Samples every SAMPLE_STEP rows and columns; skips noDataValue.
+ * Returns points and the radius in meters for consistent cell size at any zoom.
+ */
+function gridToSampledPoints(
   grid: MERRA2PM25GridResponse
-): number | null {
-  const { bounds, width, height } = grid;
-  if (lat < bounds.south || lat > bounds.north || lon < bounds.west || lon > bounds.east) return null;
-  const row = Math.floor(((bounds.north - lat) / (bounds.north - bounds.south)) * (height - 1));
-  const col = Math.floor(((lon - bounds.west) / (bounds.east - bounds.west)) * (width - 1));
-  const idx = Math.max(0, Math.min(row * width + col, grid.values.length - 1));
-  return idx;
+): { points: SampledPoint[]; radiusM: number } {
+  const { bounds, width, height, values, noDataValue } = grid;
+  const { south, north, west, east } = bounds;
+  const latStep = (north - south) / height;
+  const lonStep = (east - west) / width;
+  const points: SampledPoint[] = [];
+
+  for (let row = 0; row < height; row += SAMPLE_STEP) {
+    for (let col = 0; col < width; col += SAMPLE_STEP) {
+      const idx = row * width + col;
+      const pm25Value = values[idx];
+      if (pm25Value === noDataValue || pm25Value == null || isNaN(pm25Value)) continue;
+
+      const lat = north - (row + 0.5) * latStep;
+      const lon = west + (col + 0.5) * lonStep;
+      points.push({ lat, lon, value: pm25Value });
+    }
+  }
+  const radiusM = (0.5 * Math.min(latStep, lonStep) * METERS_PER_DEG_LAT);
+  return { points, radiusM };
 }
 
 export interface PM25Sample {
@@ -117,41 +111,13 @@ const PM25HeatMapLayer = ({
   onSourceChange,
 }: PM25HeatMapLayerProps) => {
   const map = useMap();
-  const overlayRef = useRef<L.ImageOverlay | null>(null);
-  const gridRef = useRef<MERRA2PM25GridResponse | null>(null);
+  const groupRef = useRef<L.LayerGroup | null>(null);
   const onPm25SampleRef = useRef(onPm25Sample);
-  onPm25SampleRef.current = onPm25Sample;
   const onLoadingChangeRef = useRef(onLoadingChange);
-  onLoadingChangeRef.current = onLoadingChange;
   const onSourceChangeRef = useRef(onSourceChange);
+  onPm25SampleRef.current = onPm25Sample;
+  onLoadingChangeRef.current = onLoadingChange;
   onSourceChangeRef.current = onSourceChange;
-
-  const handleMapEvent = useCallback((e: L.LeafletMouseEvent) => {
-    const grid = gridRef.current;
-    const cb = onPm25SampleRef.current;
-    if (!grid || !cb) return;
-
-    const idx = latLonToIndex(e.latlng.lat, e.latlng.lng, grid);
-    if (idx == null) {
-      cb(null);
-      return;
-    }
-    const v = grid.values[idx];
-    if (v === grid.noDataValue || v == null || isNaN(v)) {
-      cb(null);
-      return;
-    }
-    cb({
-      lat: e.latlng.lat,
-      lon: e.latlng.lng,
-      value: v,
-      date: grid.date,
-      min: grid.min,
-      max: grid.max,
-      units: grid.units,
-      source: grid.source,
-    });
-  }, []);
 
   useEffect(() => {
     if (!map) return;
@@ -162,30 +128,58 @@ const PM25HeatMapLayer = ({
     getMERRA2PM25Grid(date)
       .then((grid) => {
         if (cancelled || !map) return;
-        gridRef.current = grid;
         onSourceChangeRef.current?.(grid.source);
 
-        const canvas = document.createElement('canvas');
-        renderGridToCanvas(grid, canvas, opacity);
+        const group = L.layerGroup();
+        const { points, radiusM } = gridToSampledPoints(grid);
+        const { min, max, noDataValue, date: gridDate, units, source } = grid;
 
-        const bounds: L.LatLngBoundsExpression = [
-          [grid.bounds.south, grid.bounds.west],
-          [grid.bounds.north, grid.bounds.east],
-        ];
-        const dataUrl = canvas.toDataURL('image/png');
-        const overlay = L.imageOverlay(dataUrl, bounds, {
-          opacity: 1,
-          interactive: true,
-          pane: 'overlayPane',
-          zIndex: 340,
-        });
-        overlay.addTo(map);
-        overlayRef.current = overlay;
+        const notifySample = (s: PM25Sample | null) => {
+          onPm25SampleRef.current?.(s);
+        };
 
-        overlay.on('click', handleMapEvent);
-        overlay.on('mousemove', handleMapEvent);
-        overlay.on('mouseout', () => onPm25SampleRef.current?.(null));
+        for (const p of points) {
+          const fillColor = valueToColor(p.value, min, max, noDataValue);
+          if (fillColor == null) continue;
 
+          const sample: PM25Sample = {
+            lat: p.lat,
+            lon: p.lon,
+            value: p.value,
+            date: gridDate,
+            min,
+            max,
+            units,
+            source,
+          };
+
+          const circle = L.circle([p.lat, p.lon], {
+            radius: radiusM,
+            fillColor,
+            color: 'rgba(255,255,255,0.7)',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: opacity,
+            renderer: L.svg(),
+            interactive: true,
+          });
+
+          circle.bindTooltip(
+            `PM2.5: ${p.value.toFixed(1)} ${units}`,
+            { permanent: false, direction: 'top', className: 'pm25-marker-tooltip' }
+          );
+
+          circle.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            notifySample(sample);
+          });
+          circle.on('mouseover', () => notifySample(sample));
+          circle.on('mouseout', () => notifySample(null));
+          circle.addTo(group);
+        }
+
+        group.addTo(map);
+        groupRef.current = group;
         onLoadingChangeRef.current?.(false);
       })
       .catch((err) => {
@@ -196,19 +190,13 @@ const PM25HeatMapLayer = ({
     return () => {
       cancelled = true;
       onLoadingChangeRef.current?.(false);
-      const ov = overlayRef.current;
-      if (ov) {
-        ov.off('click', handleMapEvent);
-        ov.off('mousemove', handleMapEvent);
-        ov.off('mouseout');
+      onPm25SampleRef.current?.(null);
+      if (groupRef.current) {
+        map.removeLayer(groupRef.current);
+        groupRef.current = null;
       }
-      if (overlayRef.current) {
-        map.removeLayer(overlayRef.current);
-        overlayRef.current = null;
-      }
-      gridRef.current = null;
     };
-  }, [map, date, opacity, handleMapEvent]);
+  }, [map, date, opacity]);
 
   return null;
 };
