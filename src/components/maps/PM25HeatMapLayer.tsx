@@ -1,88 +1,21 @@
 /**
- * PM25HeatMapLayer – point-based MERRA2 PM2.5 visualization
- * Converts the grid to sampled circle markers (like AERONET) for a lighter,
- * consistent visualization. Uses a LayerGroup and L.circleMarker with shared canvas renderer.
+ * MERRA2 PM2.5 – tile-based raster rendering.
+ * Uses a custom Leaflet GridLayer to draw PM2.5 tiles dynamically from the grid,
+ * avoiding rectangular image overlays and preserving smooth scientific gradients.
  */
 
 import { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { getMERRA2PM25Grid, type MERRA2PM25GridResponse } from '../../services/merra2Api';
-
-const SAMPLE_STEP = 5;
-
-/** PM2.5 color gradient: green (low) → yellow → orange → red (high) */
-const PM25_GRADIENT: Record<number, string> = {
-  0.0: '#16a34a',
-  0.2: '#84cc16',
-  0.4: '#eab308',
-  0.6: '#f97316',
-  0.8: '#dc2626',
-  1.0: '#7f1d1d',
-};
-
-function valueToColor(value: number, min: number, max: number, noDataValue: number): string | null {
-  if (value === noDataValue || value == null || isNaN(value)) return null;
-  if (min >= max) return '#94a3b8';
-  const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  let lowKey = 0;
-  let highKey = 1;
-  for (const k of Object.keys(PM25_GRADIENT).map(Number).sort((a, b) => a - b)) {
-    if (k <= t) lowKey = k;
-    if (k >= t) {
-      highKey = k;
-      break;
-    }
-  }
-  if (lowKey === highKey) return PM25_GRADIENT[lowKey];
-  const s = (t - lowKey) / (highKey - lowKey);
-  const c1 = PM25_GRADIENT[lowKey];
-  const c2 = PM25_GRADIENT[highKey];
-  const hex = (x: string) => parseInt(x, 16);
-  const r = Math.round(hex(c1.slice(1, 3)) * (1 - s) + hex(c2.slice(1, 3)) * s);
-  const g = Math.round(hex(c1.slice(3, 5)) * (1 - s) + hex(c2.slice(3, 5)) * s);
-  const b = Math.round(hex(c1.slice(5, 7)) * (1 - s) + hex(c2.slice(5, 7)) * s);
-  return `rgb(${r},${g},${b})`;
-}
-
-interface SampledPoint {
-  lat: number;
-  lon: number;
-  value: number;
-}
-
-/** Approx meters per degree at equator; used for geographic circle radius */
-const METERS_PER_DEG_LAT = 111000;
-
-/**
- * Convert grid to sampled points. Each point stores PM2.5 from values[row * width + col].
- * Cell (row, col) center: lat = north - (row + 0.5) * latStep, lon = west + (col + 0.5) * lonStep.
- * Samples every SAMPLE_STEP rows and columns; skips noDataValue.
- * Returns points and the radius in meters for consistent cell size at any zoom.
- */
-function gridToSampledPoints(
-  grid: MERRA2PM25GridResponse
-): { points: SampledPoint[]; radiusM: number } {
-  const { bounds, width, height, values, noDataValue } = grid;
-  const { south, north, west, east } = bounds;
-  const latStep = (north - south) / height;
-  const lonStep = (east - west) / width;
-  const points: SampledPoint[] = [];
-
-  for (let row = 0; row < height; row += SAMPLE_STEP) {
-    for (let col = 0; col < width; col += SAMPLE_STEP) {
-      const idx = row * width + col;
-      const pm25Value = values[idx];
-      if (pm25Value === noDataValue || pm25Value == null || isNaN(pm25Value)) continue;
-
-      const lat = north - (row + 0.5) * latStep;
-      const lon = west + (col + 0.5) * lonStep;
-      points.push({ lat, lon, value: pm25Value });
-    }
-  }
-  const radiusM = (0.5 * Math.min(latStep, lonStep) * METERS_PER_DEG_LAT);
-  return { points, radiusM };
-}
+import {
+  PM25_COLORBAR_MAX,
+  PM25_COLORBAR_MIN,
+  latLonToGridFrac,
+  pm25ToRgb,
+  samplePm25AtLatLon,
+} from '../../utils/pm25Colormap';
+import './PM25HeatMapLayer.css';
 
 export interface PM25Sample {
   lat: number;
@@ -98,20 +31,88 @@ export interface PM25Sample {
 interface PM25HeatMapLayerProps {
   date: string;
   opacity?: number;
+  renderMode?: 'smooth' | 'raw';
   onPm25Sample?: (sample: PM25Sample | null) => void;
   onLoadingChange?: (loading: boolean) => void;
-  onSourceChange?: (source: 'gesdisc' | 'sample') => void;
+  onSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
+}
+
+function sampleNearest(grid: MERRA2PM25GridResponse, lat: number, lon: number): number | null {
+  const frac = latLonToGridFrac(lat, lon, grid.bounds, grid.width, grid.height);
+  if (!frac) return null;
+  const row = Math.max(0, Math.min(grid.height - 1, Math.round(frac.rowFrac)));
+  const col = Math.max(0, Math.min(grid.width - 1, Math.round(frac.colFrac)));
+  const v = grid.values[row * grid.width + col];
+  if (v == null || Number.isNaN(v) || v === grid.noDataValue) return null;
+  return v;
+}
+
+function createPm25GridLayer(
+  map: L.Map,
+  grid: MERRA2PM25GridResponse,
+  mode: 'smooth' | 'raw',
+  opacity: number
+): L.GridLayer {
+  const layer = L.gridLayer({
+    opacity,
+    zIndex: 360,
+    updateWhenIdle: true,
+    updateWhenZooming: false,
+    keepBuffer: 2,
+    noWrap: false,
+    bounds: L.latLngBounds([-90, -180], [90, 180]),
+    className: mode === 'smooth' ? 'pm25-gridlayer--smooth' : 'pm25-gridlayer--raw',
+  });
+
+  (layer as L.GridLayer & { createTile: (coords: L.Coords) => HTMLElement }).createTile = function (coords: L.Coords) {
+      const size = this.getTileSize();
+      const canvas = L.DomUtil.create('canvas', 'pm25-grid-tile') as HTMLCanvasElement;
+      canvas.width = size.x;
+      canvas.height = size.y;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return canvas;
+      const img = ctx.createImageData(size.x, size.y);
+      const pixels = img.data;
+
+      for (let y = 0; y < size.y; y++) {
+        for (let x = 0; x < size.x; x++) {
+          const worldPoint = L.point(coords.x * size.x + x, coords.y * size.y + y);
+          const latlng = map.unproject(worldPoint, coords.z);
+          const value =
+            mode === 'smooth'
+              ? samplePm25AtLatLon(grid, latlng.lat, latlng.lng)
+              : sampleNearest(grid, latlng.lat, latlng.lng);
+          if (value == null) continue;
+          const [r, g, b] = pm25ToRgb(value, PM25_COLORBAR_MIN, PM25_COLORBAR_MAX);
+          const i = (y * size.x + x) * 4;
+          pixels[i] = r;
+          pixels[i + 1] = g;
+          pixels[i + 2] = b;
+          pixels[i + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+      return canvas;
+  };
+
+  return layer;
 }
 
 const PM25HeatMapLayer = ({
   date,
-  opacity = 0.65,
+  opacity = 0.62,
+  renderMode = 'smooth',
   onPm25Sample,
   onLoadingChange,
   onSourceChange,
 }: PM25HeatMapLayerProps) => {
   const map = useMap();
-  const groupRef = useRef<L.LayerGroup | null>(null);
+  const layerRef = useRef<L.GridLayer | null>(null);
+  const gridRef = useRef<MERRA2PM25GridResponse | null>(null);
+  const moveHandlerRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
+  const clickHandlerRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
+  const outHandlerRef = useRef<(() => void) | null>(null);
   const onPm25SampleRef = useRef(onPm25Sample);
   const onLoadingChangeRef = useRef(onLoadingChange);
   const onSourceChangeRef = useRef(onSourceChange);
@@ -128,58 +129,49 @@ const PM25HeatMapLayer = ({
     getMERRA2PM25Grid(date)
       .then((grid) => {
         if (cancelled || !map) return;
-        onSourceChangeRef.current?.(grid.source);
+        onSourceChangeRef.current?.(grid.source, grid.fallbackReason);
+        gridRef.current = grid;
 
-        const group = L.layerGroup();
-        const { points, radiusM } = gridToSampledPoints(grid);
-        const { min, max, noDataValue, date: gridDate, units, source } = grid;
+        const layer = createPm25GridLayer(map, grid, renderMode, opacity);
+        layer.addTo(map);
+        layerRef.current = layer;
 
-        const notifySample = (s: PM25Sample | null) => {
-          onPm25SampleRef.current?.(s);
+        const emitSample = (latlng: L.LatLng) => {
+          const g = gridRef.current;
+          if (!g) return;
+          const value =
+            renderMode === 'smooth'
+              ? samplePm25AtLatLon(g, latlng.lat, latlng.lng)
+              : sampleNearest(g, latlng.lat, latlng.lng);
+          if (value == null) {
+            onPm25SampleRef.current?.(null);
+            return;
+          }
+          onPm25SampleRef.current?.({
+            lat: latlng.lat,
+            lon: latlng.lng,
+            value,
+            date: g.date,
+            min: g.min,
+            max: g.max,
+            units: g.units,
+            source: g.source,
+          });
         };
 
-        for (const p of points) {
-          const fillColor = valueToColor(p.value, min, max, noDataValue);
-          if (fillColor == null) continue;
+        const handleMove = (e: L.LeafletMouseEvent) => emitSample(e.latlng);
+        const handleClick = (e: L.LeafletMouseEvent) => {
+          L.DomEvent.stopPropagation(e);
+          emitSample(e.latlng);
+        };
+        const handleOut = () => onPm25SampleRef.current?.(null);
 
-          const sample: PM25Sample = {
-            lat: p.lat,
-            lon: p.lon,
-            value: p.value,
-            date: gridDate,
-            min,
-            max,
-            units,
-            source,
-          };
-
-          const circle = L.circle([p.lat, p.lon], {
-            radius: radiusM,
-            fillColor,
-            color: 'rgba(255,255,255,0.7)',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: opacity,
-            renderer: L.svg(),
-            interactive: true,
-          });
-
-          circle.bindTooltip(
-            `PM2.5: ${p.value.toFixed(1)} ${units}`,
-            { permanent: false, direction: 'top', className: 'pm25-marker-tooltip' }
-          );
-
-          circle.on('click', (e) => {
-            L.DomEvent.stopPropagation(e);
-            notifySample(sample);
-          });
-          circle.on('mouseover', () => notifySample(sample));
-          circle.on('mouseout', () => notifySample(null));
-          circle.addTo(group);
-        }
-
-        group.addTo(map);
-        groupRef.current = group;
+        moveHandlerRef.current = handleMove;
+        clickHandlerRef.current = handleClick;
+        outHandlerRef.current = handleOut;
+        map.on('mousemove', handleMove);
+        map.on('click', handleClick);
+        map.on('mouseout', handleOut);
         onLoadingChangeRef.current?.(false);
       })
       .catch((err) => {
@@ -191,12 +183,19 @@ const PM25HeatMapLayer = ({
       cancelled = true;
       onLoadingChangeRef.current?.(false);
       onPm25SampleRef.current?.(null);
-      if (groupRef.current) {
-        map.removeLayer(groupRef.current);
-        groupRef.current = null;
+      gridRef.current = null;
+      if (moveHandlerRef.current) map.off('mousemove', moveHandlerRef.current);
+      if (clickHandlerRef.current) map.off('click', clickHandlerRef.current);
+      if (outHandlerRef.current) map.off('mouseout', outHandlerRef.current);
+      moveHandlerRef.current = null;
+      clickHandlerRef.current = null;
+      outHandlerRef.current = null;
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current);
+        layerRef.current = null;
       }
     };
-  }, [map, date, opacity]);
+  }, [map, date, opacity, renderMode]);
 
   return null;
 };

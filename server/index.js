@@ -18,10 +18,12 @@ app.get('/api/merra2/pm25/grid', async (req, res) => {
     const dateParam = req.query.date || new Date().toISOString().slice(0, 10);
     const [y, m, d] = dateParam.split('-').map(Number);
     const year = y || new Date().getFullYear();
-    const clampedYear = Math.max(2000, Math.min(2024, year));
-    const clampedDate = `${clampedYear}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
+    // Keep lower bound for dataset start year; do not hard-cap upper year
+    // so newly published years can be requested without code changes.
+    const normalizedYear = Math.max(2000, year);
+    const normalizedDate = `${normalizedYear}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
 
-    const grid = await fetchMerra2Grid(clampedDate);
+    const grid = await fetchMerra2Grid(normalizedDate);
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json(grid);

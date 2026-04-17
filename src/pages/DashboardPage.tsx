@@ -55,6 +55,8 @@ const DashboardPage = () => {
   const [fireLoading, setFireLoading] = useState(false);
   const [merra2Loading, setMerra2Loading] = useState(false);
   const [merra2DataSource, setMerra2DataSource] = useState<'gesdisc' | 'sample' | null>(null);
+  const [merra2FallbackReason, setMerra2FallbackReason] = useState<string | null>(null);
+  const [merra2RenderMode, setMerra2RenderMode] = useState<'smooth' | 'raw'>('smooth');
   const [aeronetLoading, setAeronetLoading] = useState(false);
   const [aeronetError, setAeronetError] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
@@ -222,10 +224,16 @@ const DashboardPage = () => {
       }
       if (prev === 'merra2') {
         setMerra2DataSource(null);
+        setMerra2FallbackReason(null);
         setMerra2Loading(false);
       }
       return next;
     });
+  }, []);
+
+  const handleMerra2SourceChange = useCallback((source: 'gesdisc' | 'sample', fallbackReason?: string) => {
+    setMerra2DataSource(source);
+    setMerra2FallbackReason(fallbackReason ?? null);
   }, []);
 
   return (
@@ -376,7 +384,20 @@ const DashboardPage = () => {
               </label>
               {showMERRA2PM25 && (
                 <>
-                  <small className="layer-tip">Surface PM2.5 · GES DISC HAQAST (2000–2024) · Uses selected date</small>
+                  <small className="layer-tip">
+                    Surface PM2.5 · GES DISC HAQAST (2000–2024) · Uses selected date · Map colors use a 0–100 µg/m³ Reds-style scale (like daily MERRA2 CNN figures)
+                  </small>
+                  <label className="layer-checkbox">
+                    <span style={{ marginRight: 8 }}>Rendering:</span>
+                    <select
+                      value={merra2RenderMode}
+                      onChange={(e) => setMerra2RenderMode(e.target.value as 'smooth' | 'raw')}
+                      style={{ padding: '2px 6px', fontSize: 12 }}
+                    >
+                      <option value="smooth">Smooth heatmap</option>
+                      <option value="raw">Raw grid</option>
+                    </select>
+                  </label>
                   {selectedDate.year() > 2024 && (
                     <small className="layer-tip layer-tip-warn">
                       ⚠ Date outside 2000–2024 range.{' '}
@@ -386,7 +407,11 @@ const DashboardPage = () => {
                     </small>
                   )}
                   {merra2DataSource === 'sample' && selectedDate.year() <= 2024 && (
-                    <small className="layer-tip layer-tip-warn">⚠ Backend offline. Showing sample data.</small>
+                    <small className="layer-tip layer-tip-warn">
+                      {merra2FallbackReason === 'opendap_401_unauthorized'
+                        ? '⚠ NASA Earthdata authorization failed (401). Showing sample data.'
+                        : '⚠ Backend unavailable or remote fetch failed. Showing sample data.'}
+                    </small>
                   )}
                 </>
               )}
@@ -442,9 +467,11 @@ const DashboardPage = () => {
                 showAeronet={showAeronet}
                 showVIIRSImagery={showVIIRSImagery}
                 showMERRA2PM25={showMERRA2PM25}
+                merra2RenderMode={merra2RenderMode}
+                merra2Loading={merra2Loading}
                 onPm25Sample={handlePm25Sample}
                 onMerra2LoadingChange={setMerra2Loading}
-                onMerra2SourceChange={setMerra2DataSource}
+                onMerra2SourceChange={handleMerra2SourceChange}
                 selectedDate={
                   selectedDate.isAfter(dayjs(), 'day')
                     ? dayjs().format('YYYY-MM-DD')

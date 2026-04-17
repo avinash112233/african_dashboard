@@ -6,6 +6,7 @@ import CircleFireTable from './CircleFireTable';
 import 'leaflet/dist/leaflet.css';
 import CanvasFireLayer from './CanvasFireLayer';
 import PM25HeatMapLayer from './PM25HeatMapLayer';
+import PM25Colorbar from './PM25Colorbar';
 import './MapVisualization.css';
 import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
@@ -28,9 +29,12 @@ interface MapVisualizationProps {
   showAeronet: boolean;
   showVIIRSImagery?: boolean;
   showMERRA2PM25?: boolean;
+  merra2RenderMode?: 'smooth' | 'raw';
+  /** When true, colorbar stays hidden until raster is ready */
+  merra2Loading?: boolean;
   onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
   onMerra2LoadingChange?: (loading: boolean) => void;
-  onMerra2SourceChange?: (source: 'gesdisc' | 'sample') => void;
+  onMerra2SourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
   onAeronetSiteClick?: (site: AERONETSite) => void;
   selectedDate?: string;
@@ -50,6 +54,8 @@ const MapVisualization = ({
   showAeronet,
   showVIIRSImagery = false,
   showMERRA2PM25 = false,
+  merra2RenderMode = 'smooth',
+  merra2Loading = false,
   onPm25Sample,
   onMerra2LoadingChange,
   onMerra2SourceChange,
@@ -84,6 +90,7 @@ const MapVisualization = ({
   }, [showVIIRSImagery, selectedDate]);
 
   return (
+    <div className="map-visualization-root">
     <MapContainer
       center={[5, 20]}
       zoom={5}
@@ -142,7 +149,8 @@ const MapVisualization = ({
       {showMERRA2PM25 && (
         <PM25HeatMapLayer
           date={selectedDate}
-          opacity={0.65}
+          opacity={0.62}
+          renderMode={merra2RenderMode}
           onPm25Sample={onPm25Sample}
           onLoadingChange={onMerra2LoadingChange}
           onSourceChange={onMerra2SourceChange}
@@ -195,6 +203,8 @@ const MapVisualization = ({
         </div>
       )}
     </MapContainer>
+    {showMERRA2PM25 && <PM25Colorbar visible={!merra2Loading} units="µg/m³" />}
+    </div>
   );
 };
 
