@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, LayerGroup, LayersControl, useMapEvents } from 'react-leaflet';
+import { useState } from 'react';
+import { MapContainer, TileLayer, LayerGroup, LayersControl, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
+import FireChartRectangleLayer from './FireChartRectangleLayer';
 import 'leaflet/dist/leaflet.css';
 import CanvasFireLayer from './CanvasFireLayer';
-import PM25HeatMapLayer from './PM25HeatMapLayer';
-import PM25Colorbar from './PM25Colorbar';
 import './MapVisualization.css';
 import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
+import type { LatLonBounds } from '../../utils/geoUtils';
+import type { MERRA2StationDailyRecord } from '../../services/merra2Api';
+import { calculateAQIFromPm25, getAqiCategory } from '../../utils/aqiUtils';
 
 const EMPTY_FIRE_POINTS: FIRMSFirePoint[] = [];
 const EMPTY_AERONET_SITES: AERONETSite[] = [];
@@ -29,12 +31,7 @@ interface MapVisualizationProps {
   showAeronet: boolean;
   showVIIRSImagery?: boolean;
   showMERRA2PM25?: boolean;
-  merra2RenderMode?: 'smooth' | 'raw';
-  /** When true, colorbar stays hidden until raster is ready */
-  merra2Loading?: boolean;
   onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
-  onMerra2LoadingChange?: (loading: boolean) => void;
-  onMerra2SourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
   onAeronetSiteClick?: (site: AERONETSite) => void;
   selectedDate?: string;
@@ -44,6 +41,13 @@ interface MapVisualizationProps {
   onCircleCenterChange?: (lat: number, lng: number) => void;
   onCircleClose?: () => void;
   pointsInCircle?: FIRMSFirePoint[];
+  /** When true, user can drag a rectangle to filter fire charts */
+  fireChartRectDrawActive?: boolean;
+  /** Committed axis-aligned bounds for fire chart spatial filter */
+  fireChartBounds?: LatLonBounds | null;
+  onFireChartBoundsCommit?: (bounds: LatLonBounds) => void;
+  merra2Stations?: MERRA2StationDailyRecord[];
+  onMerra2StationClick?: (station: MERRA2StationDailyRecord) => void;
 }
 
 const MapVisualization = ({
@@ -54,11 +58,7 @@ const MapVisualization = ({
   showAeronet,
   showVIIRSImagery = false,
   showMERRA2PM25 = false,
-  merra2RenderMode = 'smooth',
-  merra2Loading = false,
   onPm25Sample,
-  onMerra2LoadingChange,
-  onMerra2SourceChange,
   onFireClick,
   onAeronetSiteClick,
   selectedDate = new Date().toISOString().slice(0, 10),
@@ -68,26 +68,13 @@ const MapVisualization = ({
   onCircleCenterChange,
   onCircleClose,
   pointsInCircle = [],
+  fireChartRectDrawActive = false,
+  fireChartBounds = null,
+  onFireChartBoundsCommit,
+  merra2Stations = [],
+  onMerra2StationClick,
 }: MapVisualizationProps) => {
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
-
-  // Debug logs for VIIRS imagery
-  useEffect(() => {
-    if (showVIIRSImagery) {
-      const isDev = import.meta.env.DEV;
-      const base = isDev
-        ? `${window.location.origin}/api/gibs`
-        : 'https://gibs-a.earthdata.nasa.gov';
-      const testUrl = `${base}/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${selectedDate}/GoogleMapsCompatible_Level9/5/10/10.jpg`;
-      console.log('[VIIRS] Imagery enabled', { selectedDate, isDev, testUrl });
-      // Diagnose tile response
-      fetch(testUrl, { method: 'HEAD' })
-        .then((r) => console.log('[VIIRS] Test tile response', testUrl, r.status, r.statusText))
-        .catch((err) => console.error('[VIIRS] Test tile fetch failed', err));
-    } else {
-      console.log('[VIIRS] Imagery disabled');
-    }
-  }, [showVIIRSImagery, selectedDate]);
 
   return (
     <div className="map-visualization-root">
@@ -147,14 +134,44 @@ const MapVisualization = ({
       )}
 
       {showMERRA2PM25 && (
-        <PM25HeatMapLayer
-          date={selectedDate}
-          opacity={0.62}
-          renderMode={merra2RenderMode}
-          onPm25Sample={onPm25Sample}
-          onLoadingChange={onMerra2LoadingChange}
-          onSourceChange={onMerra2SourceChange}
-        />
+        <>
+          {merra2Stations.map((s) => {
+            const aqi = calculateAQIFromPm25(s.pm25);
+            const aqiCategory = getAqiCategory(aqi);
+            return (
+            <CircleMarker
+              key={`merra2-${s.sitename}-${s.latitude}-${s.longitude}`}
+              center={[s.latitude, s.longitude]}
+              radius={6}
+              pathOptions={{
+                color: '#334155',
+                weight: 0.7,
+                fillColor: aqiCategory.color,
+                fillOpacity: 0.9,
+              }}
+              eventHandlers={{
+                click: () => {
+                  onMerra2StationClick?.(s);
+                  onPm25Sample?.({
+                    lat: s.latitude,
+                    lon: s.longitude,
+                    value: s.pm25,
+                    date: s.date,
+                    min: 0,
+                    max: 0,
+                    units: 'µg/m³',
+                    source: 'gesdisc',
+                  });
+                },
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -4]}>
+                {s.sitename}: AQI {aqi ?? '—'} ({aqiCategory.label}) · PM2.5 {s.pm25.toFixed(2)} µg/m³
+              </Tooltip>
+            </CircleMarker>
+            );
+          })}
+        </>
       )}
 
       {(showFires || showAeronet) && (
@@ -165,7 +182,7 @@ const MapVisualization = ({
             aeronetSites={showAeronet ? aeronetSites : EMPTY_AERONET_SITES}
             siteAodMap={siteAodMap}
             onAeronetSiteClick={onAeronetSiteClick}
-            allowPointerEvents={!circleSelectActive}
+            allowPointerEvents={!circleSelectActive && !fireChartRectDrawActive}
           />
           {showFires && circleSelectActive && (
             <CircleSelectLayer
@@ -175,7 +192,14 @@ const MapVisualization = ({
               active={circleSelectActive}
             />
           )}
-          {showFires && circleCenter && (
+          {showFires && (fireChartRectDrawActive || fireChartBounds) && (
+            <FireChartRectangleLayer
+              drawActive={fireChartRectDrawActive}
+              committedBounds={fireChartBounds}
+              onCommit={onFireChartBoundsCommit ?? (() => {})}
+            />
+          )}
+          {showFires && (circleCenter || fireChartBounds) && (
             <CircleFireTable points={pointsInCircle} onFireClick={onFireClick} onClose={onCircleClose} />
           )}
         </>
@@ -203,7 +227,6 @@ const MapVisualization = ({
         </div>
       )}
     </MapContainer>
-    {showMERRA2PM25 && <PM25Colorbar visible={!merra2Loading} units="µg/m³" />}
     </div>
   );
 };

@@ -1,3 +1,32 @@
+/** Axis-aligned geographic bounds (south ≤ north, west ≤ east) for simple regional filters. */
+export interface LatLonBounds {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+/** Build normalized bounds from two corner coordinates (any order). */
+export function normalizeLatLonBounds(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): LatLonBounds {
+  return {
+    south: Math.min(lat1, lat2),
+    north: Math.max(lat1, lat2),
+    west: Math.min(lng1, lng2),
+    east: Math.max(lng1, lng2),
+  };
+}
+
+/** True if (lat, lng) lies inside bounds (inclusive). Assumes south ≤ north and west ≤ east. */
+export function isPointInLatLonBounds(lat: number, lng: number, bounds: LatLonBounds): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  return lat >= bounds.south && lat <= bounds.north && lng >= bounds.west && lng <= bounds.east;
+}
+
 /** Haversine distance in km between two lat/lng points */
 export function haversineKm(
   lat1: number,

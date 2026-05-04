@@ -64,6 +64,53 @@
   margin: 8px 0 12px 0;
 }
 
+.aeronet-subcontrol {
+  margin-left: 18px;
+  width: calc(100% - 18px);
+}
+
+.site-select.aeronet-subcontrol {
+  margin-left: 18px;
+  width: calc(100% - 18px);
+}
+
+.aeronet-subcontrol-hint {
+  margin-left: 18px;
+}
+
+.fire-subcontrol {
+  margin-left: 18px;
+  width: calc(100% - 18px);
+}
+
+.merra2-classification-legend {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.merra2-classification-legend strong {
+  font-size: 12px;
+  color: #334155;
+}
+
+.merra2-classification-legend ul {
+  list-style: none;
+  margin: 6px 0 0 0;
+  padding: 0;
+}
+
+.merra2-classification-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
 .dashboard-map-area {
   flex: 1;
   position: relative;

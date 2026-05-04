@@ -1,69 +1,100 @@
-/**
- * MERRA2_CNN_HAQAST_PM25 – bias-corrected global hourly surface PM2.5
- * Fetches global grid via /api/merra2/pm25/grid backend (proxied to GES DISC OPeNDAP or sample)
- * Dataset: https://www.earthdata.nasa.gov/data/catalog/ges-disc-merra2-cnn-haqast-pm25-1
- * Coverage: 2000-01-01 to 2024-12-31
- */
-
-/** Global bounds for MERRA2 grid */
-const GLOBAL_BBOX = { latMin: -90, latMax: 90, lonMin: -180, lonMax: 180 };
-const GLOBAL_WIDTH = 576;
-const GLOBAL_HEIGHT = 361;
-
-function buildGlobalFallbackGrid(date: string, fallbackReason: string = 'frontend_fallback'): MERRA2PM25GridResponse {
-  const values: number[] = [];
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-
-  for (let row = 0; row < GLOBAL_HEIGHT; row++) {
-    const lat = GLOBAL_BBOX.latMax - (row / (GLOBAL_HEIGHT - 1)) * (GLOBAL_BBOX.latMax - GLOBAL_BBOX.latMin);
-    for (let col = 0; col < GLOBAL_WIDTH; col++) {
-      const lon = GLOBAL_BBOX.lonMin + (col / (GLOBAL_WIDTH - 1)) * (GLOBAL_BBOX.lonMax - GLOBAL_BBOX.lonMin);
-
-      // Synthetic-but-plausible global PM2.5 hotspots so fallback looks like a real heatmap.
-      const tropics = Math.exp(-Math.pow(lat / 28, 2));
-      const southAsia = Math.exp(-Math.pow((lon - 80) / 30, 2)) * Math.exp(-Math.pow((lat - 24) / 10, 2));
-      const westAfrica = Math.exp(-Math.pow((lon - 10) / 25, 2)) * Math.exp(-Math.pow((lat - 8) / 14, 2));
-      const eastChina = Math.exp(-Math.pow((lon - 112) / 18, 2)) * Math.exp(-Math.pow((lat - 33) / 10, 2));
-      const biomassBelt = Math.exp(-Math.pow((lat + 5) / 16, 2)) * Math.exp(-Math.pow((lon + 55) / 70, 2));
-      const baseline = 4 + 7 * tropics + 2 * Math.cos((lat + lon) * 0.05);
-
-      let v =
-        baseline +
-        55 * southAsia +
-        28 * westAfrica +
-        30 * eastChina +
-        20 * biomassBelt;
-
-      v = Math.max(1, Math.min(115, v));
-      v = Math.round(v * 10) / 10;
-      values.push(v);
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-  }
-
-  return {
-    date,
-    units: 'µg/m³',
-    bounds: {
-      south: GLOBAL_BBOX.latMin,
-      west: GLOBAL_BBOX.lonMin,
-      north: GLOBAL_BBOX.latMax,
-      east: GLOBAL_BBOX.lonMax,
-    },
-    width: GLOBAL_WIDTH,
-    height: GLOBAL_HEIGHT,
-    noDataValue: -9999,
-    min: Number.isFinite(min) ? min : 0,
-    max: Number.isFinite(max) ? max : 100,
-    values,
-    source: 'sample',
-    fallbackReason,
-  };
+export interface MERRA2StationDailyRecord {
+  sitename: string;
+  country: string | null;
+  fullAddress: string | null;
+  latitude: number;
+  longitude: number;
+  pm25: number;
+  date: string;
+  datetime: string;
 }
 
-/** Grid response contract for canvas overlay (GET /api/merra2/pm25/grid) */
+export interface MERRA2StationTimeseriesPoint {
+  datetime: string;
+  pm25: number;
+}
+
+export interface MERRA2StationTimeseriesResponse {
+  station: {
+    sitename: string;
+    country?: string | null;
+    fullAddress?: string | null;
+    latitude?: number;
+    longitude?: number;
+  };
+  start: string;
+  end: string;
+  points: MERRA2StationTimeseriesPoint[];
+}
+
+export interface MERRA2StationListRecord {
+  sitename: string;
+  country: string | null;
+  fullAddress: string | null;
+  latitude: number;
+  longitude: number;
+}
+
+export interface MERRA2LatestDateResponse {
+  latestDate: string;
+  latestDatetimeUtc: string;
+  sourceFile?: string;
+}
+
+function buildBaseApiUrl(path: string) {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '';
+  return `${base}${path}`;
+}
+
+async function readJsonOrThrow<T>(res: Response): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  let message = `Request failed (${res.status})`;
+  try {
+    const payload = (await res.json()) as { error?: string };
+    if (payload?.error) message = payload.error;
+  } catch {
+    // fallback to generic message
+  }
+  throw new Error(message);
+}
+
+/** Get one PM2.5 daily value per station for selected UTC date. */
+export async function getMERRA2StationsByDate(date: string): Promise<MERRA2StationDailyRecord[]> {
+  const url = buildBaseApiUrl(`/api/merra2/stations?date=${encodeURIComponent(date)}`);
+  const res = await fetch(url);
+  const json = await readJsonOrThrow<{ date: string; stations: MERRA2StationDailyRecord[] }>(res);
+  return Array.isArray(json.stations) ? json.stations : [];
+}
+
+/** Get station hourly PM2.5 series over requested date range. */
+export async function getMERRA2StationTimeseries(
+  sitename: string,
+  start: string,
+  end: string
+): Promise<MERRA2StationTimeseriesResponse> {
+  const url = buildBaseApiUrl(
+    `/api/merra2/station-timeseries?sitename=${encodeURIComponent(sitename)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+  );
+  const res = await fetch(url);
+  return readJsonOrThrow<MERRA2StationTimeseriesResponse>(res);
+}
+
+/** Optional station catalog endpoint for search/dropdowns. */
+export async function getMERRA2StationList(): Promise<MERRA2StationListRecord[]> {
+  const url = buildBaseApiUrl('/api/merra2/station-list');
+  const res = await fetch(url);
+  const json = await readJsonOrThrow<{ stations: MERRA2StationListRecord[] }>(res);
+  return Array.isArray(json.stations) ? json.stations : [];
+}
+
+/** Get latest available parquet date for station data fallback. */
+export async function getMERRA2LatestDate(): Promise<MERRA2LatestDateResponse> {
+  const url = buildBaseApiUrl('/api/merra2/latest-date');
+  const res = await fetch(url);
+  return readJsonOrThrow<MERRA2LatestDateResponse>(res);
+}
+
+// Legacy grid API contract kept only for backward-compatibility with unused heatmap component.
 export interface MERRA2PM25GridResponse {
   date: string;
   units: string;
@@ -74,40 +105,11 @@ export interface MERRA2PM25GridResponse {
   min: number;
   max: number;
   values: number[];
-  /** 'gesdisc' = real NASA data from backend; 'sample' = static fallback */
   source: 'gesdisc' | 'sample';
-  /** Optional detail when source=sample (e.g. auth failure, network error) */
   fallbackReason?: string;
 }
 
-/**
- * Fetch MERRA2 PM2.5 global grid (canvas overlay format).
- * Returns bounds, dimensions, and flattened values array (row-major).
- * In dev: tries backend (npm run api); falls back to sample if backend down or date out of range.
- * In prod: always uses sample data (no backend available on static hosts).
- */
-export async function getMERRA2PM25Grid(date: string): Promise<MERRA2PM25GridResponse> {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '';
-  const apiUrl = `${base}/api/merra2/pm25/grid?date=${encodeURIComponent(date)}`;
-  const loadSample = async (): Promise<MERRA2PM25GridResponse> => {
-    return buildGlobalFallbackGrid(date, 'frontend_backend_unreachable');
-  };
-
-  if (import.meta.env.PROD) return loadSample();
-
-  try {
-    const res = await fetch(apiUrl);
-    if (res.ok) {
-      const data = (await res.json()) as Partial<MERRA2PM25GridResponse>;
-      if (data.values && data.bounds) {
-        const source = data.source === 'gesdisc' || data.source === 'sample' ? data.source : 'gesdisc';
-        return { ...(data as Omit<MERRA2PM25GridResponse, 'source'>), source };
-      }
-    }
-  } catch {
-    /* backend down or network error – fall through to sample */
-  }
-  return loadSample();
+/** @deprecated Parquet station workflow replaced this grid route for active UI usage. */
+export async function getMERRA2PM25Grid(_date: string): Promise<MERRA2PM25GridResponse> {
+  throw new Error('MERRA2 grid heatmap is deprecated. Use station endpoints instead.');
 }
-
-export { GLOBAL_BBOX };

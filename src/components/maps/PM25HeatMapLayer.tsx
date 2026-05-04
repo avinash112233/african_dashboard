@@ -11,7 +11,6 @@ import { getMERRA2PM25Grid, type MERRA2PM25GridResponse } from '../../services/m
 import {
   PM25_COLORBAR_MAX,
   PM25_COLORBAR_MIN,
-  latLonToGridFrac,
   pm25ToRgb,
   samplePm25AtLatLon,
 } from '../../utils/pm25Colormap';
@@ -31,26 +30,14 @@ export interface PM25Sample {
 interface PM25HeatMapLayerProps {
   date: string;
   opacity?: number;
-  renderMode?: 'smooth' | 'raw';
   onPm25Sample?: (sample: PM25Sample | null) => void;
   onLoadingChange?: (loading: boolean) => void;
   onSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
 }
 
-function sampleNearest(grid: MERRA2PM25GridResponse, lat: number, lon: number): number | null {
-  const frac = latLonToGridFrac(lat, lon, grid.bounds, grid.width, grid.height);
-  if (!frac) return null;
-  const row = Math.max(0, Math.min(grid.height - 1, Math.round(frac.rowFrac)));
-  const col = Math.max(0, Math.min(grid.width - 1, Math.round(frac.colFrac)));
-  const v = grid.values[row * grid.width + col];
-  if (v == null || Number.isNaN(v) || v === grid.noDataValue) return null;
-  return v;
-}
-
 function createPm25GridLayer(
   map: L.Map,
   grid: MERRA2PM25GridResponse,
-  mode: 'smooth' | 'raw',
   opacity: number
 ): L.GridLayer {
   const layer = L.gridLayer({
@@ -61,7 +48,7 @@ function createPm25GridLayer(
     keepBuffer: 2,
     noWrap: false,
     bounds: L.latLngBounds([-90, -180], [90, 180]),
-    className: mode === 'smooth' ? 'pm25-gridlayer--smooth' : 'pm25-gridlayer--raw',
+    className: 'pm25-gridlayer--smooth',
   });
 
   (layer as L.GridLayer & { createTile: (coords: L.Coords) => HTMLElement }).createTile = function (coords: L.Coords) {
@@ -78,10 +65,7 @@ function createPm25GridLayer(
         for (let x = 0; x < size.x; x++) {
           const worldPoint = L.point(coords.x * size.x + x, coords.y * size.y + y);
           const latlng = map.unproject(worldPoint, coords.z);
-          const value =
-            mode === 'smooth'
-              ? samplePm25AtLatLon(grid, latlng.lat, latlng.lng)
-              : sampleNearest(grid, latlng.lat, latlng.lng);
+          const value = samplePm25AtLatLon(grid, latlng.lat, latlng.lng);
           if (value == null) continue;
           const [r, g, b] = pm25ToRgb(value, PM25_COLORBAR_MIN, PM25_COLORBAR_MAX);
           const i = (y * size.x + x) * 4;
@@ -102,7 +86,6 @@ function createPm25GridLayer(
 const PM25HeatMapLayer = ({
   date,
   opacity = 0.62,
-  renderMode = 'smooth',
   onPm25Sample,
   onLoadingChange,
   onSourceChange,
@@ -132,17 +115,14 @@ const PM25HeatMapLayer = ({
         onSourceChangeRef.current?.(grid.source, grid.fallbackReason);
         gridRef.current = grid;
 
-        const layer = createPm25GridLayer(map, grid, renderMode, opacity);
+        const layer = createPm25GridLayer(map, grid, opacity);
         layer.addTo(map);
         layerRef.current = layer;
 
         const emitSample = (latlng: L.LatLng) => {
           const g = gridRef.current;
           if (!g) return;
-          const value =
-            renderMode === 'smooth'
-              ? samplePm25AtLatLon(g, latlng.lat, latlng.lng)
-              : sampleNearest(g, latlng.lat, latlng.lng);
+          const value = samplePm25AtLatLon(g, latlng.lat, latlng.lng);
           if (value == null) {
             onPm25SampleRef.current?.(null);
             return;
@@ -195,7 +175,7 @@ const PM25HeatMapLayer = ({
         layerRef.current = null;
       }
     };
-  }, [map, date, opacity, renderMode]);
+  }, [map, date, opacity]);
 
   return null;
 };

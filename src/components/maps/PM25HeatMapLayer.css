@@ -1,8 +1,3 @@
 .pm25-gridlayer--smooth .pm25-grid-tile {
   image-rendering: auto;
 }
-
-.pm25-gridlayer--raw .pm25-grid-tile {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-}
