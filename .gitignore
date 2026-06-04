@@ -22,6 +22,9 @@ setup-env.sh
 # Backup files
 *.bak
 
+# Documentation (kept locally, not in repo)
+*.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
