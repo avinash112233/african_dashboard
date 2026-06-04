@@ -12,12 +12,17 @@ dist
 dist-ssr
 *.local
 
-# Environment variables
+# Environment variables and secrets (never commit)
 .env
+.env.*
+.env.example
 .env.local
 .env.production
-.env.*.local
+.env.development
 setup-env.sh
+*credentials*
+*.pem
+*.key
 
 # Backup files
 *.bak
