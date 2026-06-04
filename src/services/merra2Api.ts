@@ -10,6 +10,7 @@ export interface MERRA2StationDailyRecord {
 }
 
 export interface MERRA2StationTimeseriesPoint {
+  date?: string;
   datetime: string;
   pm25: number;
 }

@@ -46,3 +46,8 @@ export function haversineKm(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
+
+/** Approximate distance in meters (fast; for circle filters). */
+export function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  return haversineKm(lat1, lon1, lat2, lon2) * 1000;
+}

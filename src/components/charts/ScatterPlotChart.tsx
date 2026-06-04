@@ -9,6 +9,8 @@ import {
   Legend,
 } from 'chart.js';
 import { Scatter } from 'react-chartjs-2';
+import type { TooltipItem } from 'chart.js';
+import { chartPluginsBase, formatChartTick } from '../../utils/chartFormat';
 
 ChartJS.register(
   CategoryScale,
@@ -51,12 +53,22 @@ const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
+      ...chartPluginsBase,
       legend: {
         position: 'top' as const,
       },
       title: {
         display: true,
         text: 'Scatter Plot Analysis',
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx: TooltipItem<'scatter'>) => {
+            const x = ctx.parsed.x;
+            const y = ctx.parsed.y;
+            return `500nm: ${formatChartTick(x)}, 675nm: ${formatChartTick(y)}`;
+          },
+        },
       },
     },
     scales: {
@@ -66,11 +78,17 @@ const ScatterPlotChart = ({ data }: ScatterPlotChartProps) => {
           display: true,
           text: 'AOD 675nm',
         },
+        ticks: {
+          callback: (v: string | number) => formatChartTick(v),
+        },
       },
       x: {
         title: {
           display: true,
           text: 'AOD 500nm',
+        },
+        ticks: {
+          callback: (v: string | number) => formatChartTick(v),
         },
       },
     },

@@ -31,13 +31,19 @@
   color: #333;
 }
 
-.layer-checkbox {
+.layer-checkbox,
+.layer-radio {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
   cursor: pointer;
   font-size: 14px;
+}
+
+.layer-radio input[type='radio'] {
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .layer-checkbox.layer-disabled {
@@ -235,6 +241,60 @@
   margin: 0;
   font-size: 12px;
   color: #999;
+}
+
+.aaqe-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(17, 24, 39, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.aaqe-modal-card {
+  width: min(980px, 96%);
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.aaqe-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.aaqe-modal-header h5 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.aaqe-modal-close {
+  border: none;
+  background: transparent;
+  font-size: 34px;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.aaqe-modal-close:hover {
+  color: #111827;
+}
+
+.aaqe-modal-chart {
+  height: 300px;
+  padding: 16px 18px 20px 18px;
 }
 
 .site-select {

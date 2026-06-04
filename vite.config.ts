@@ -4,6 +4,27 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('leaflet') || id.includes('react-leaflet')) return 'leaflet';
+            if (id.includes('@mui') || id.includes('@emotion')) return 'mui';
+            if (
+              id.includes('chart.js') ||
+              id.includes('react-chartjs') ||
+              id.includes('chartjs-plugin')
+            ) {
+              return 'charts';
+            }
+            if (id.includes('react-router')) return 'router';
+            return 'vendor';
+          }
+        },
+      },
+    },
+  },
   server: {
     // Port will be auto-detected or use 5173
     proxy: {

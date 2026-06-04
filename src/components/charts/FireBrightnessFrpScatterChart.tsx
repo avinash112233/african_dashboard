@@ -9,6 +9,8 @@ import {
   Legend,
 } from 'chart.js';
 import { Scatter } from 'react-chartjs-2';
+import { chartPluginsBase, formatChartTick } from '../../utils/chartFormat';
+import { sampleForChart } from '../../utils/samplePoints';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -35,8 +37,12 @@ function isScatterRaw(value: unknown): value is FireScatterPoint {
   return typeof p.x === 'number' && Number.isFinite(p.x) && typeof p.y === 'number' && Number.isFinite(p.y);
 }
 
+const SCATTER_CHART_MAX = 400;
+
 const FireBrightnessFrpScatterChart = ({ points }: FireBrightnessFrpScatterChartProps) => {
-  if (!points.length) {
+  const chartPoints = sampleForChart(points, SCATTER_CHART_MAX);
+
+  if (!chartPoints.length) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 12 }}>
         No brightness/FRP pairs available.
@@ -50,8 +56,8 @@ const FireBrightnessFrpScatterChart = ({ points }: FireBrightnessFrpScatterChart
         datasets: [
           {
             label: 'Brightness vs FRP',
-            data: points,
-            backgroundColor: points.map((p) => confidenceColor(p.confidence)),
+            data: chartPoints,
+            backgroundColor: chartPoints.map((p) => confidenceColor(p.confidence)),
             borderColor: 'rgba(190, 24, 93, 0.9)',
             pointRadius: 3,
             pointHoverRadius: 5,
@@ -62,8 +68,15 @@ const FireBrightnessFrpScatterChart = ({ points }: FireBrightnessFrpScatterChart
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          ...chartPluginsBase,
           legend: { position: 'top' as const },
-          title: { display: true, text: 'Brightness vs FRP Scatter Plot' },
+          title: {
+            display: true,
+            text:
+              points.length > SCATTER_CHART_MAX
+                ? `Brightness vs FRP (${chartPoints.length} of ${points.length} shown)`
+                : 'Brightness vs FRP Scatter Plot',
+          },
           tooltip: {
             callbacks: {
               label: (ctx) => {
@@ -78,11 +91,13 @@ const FireBrightnessFrpScatterChart = ({ points }: FireBrightnessFrpScatterChart
         scales: {
           x: {
             title: { display: true, text: 'Brightness' },
+            ticks: { callback: (v: string | number) => formatChartTick(v) },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
           },
           y: {
             beginAtZero: true,
             title: { display: true, text: 'FRP (MW)' },
+            ticks: { callback: (v: string | number) => formatChartTick(v) },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
           },
         },

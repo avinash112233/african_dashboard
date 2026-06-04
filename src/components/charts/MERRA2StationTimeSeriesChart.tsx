@@ -12,6 +12,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
 import { formatDisplayDate } from '../../utils/dateFormat';
+import { chartPluginsBase, formatChartTick } from '../../utils/chartFormat';
 import type { MERRA2StationTimeseriesPoint } from '../../services/merra2Api';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
@@ -25,7 +26,7 @@ interface MERRA2StationTimeSeriesChartProps {
 const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2StationTimeSeriesChartProps) => {
   const daily = new Map<string, { sum: number; count: number }>();
   for (const p of points) {
-    const d = dayjs(p.datetime);
+    const d = dayjs(p.date ?? p.datetime);
     if (!d.isValid()) continue;
     const key = d.format('YYYY-MM-DD');
     const agg = daily.get(key) ?? { sum: 0, count: 0 };
@@ -51,6 +52,10 @@ const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2Stat
     );
   }
 
+  const totalDays = labels.length;
+  const isLongRange = totalDays > 90;
+  const maxTicksLimit = totalDays > 365 ? 10 : totalDays > 180 ? 12 : totalDays > 90 ? 14 : 16;
+
   return (
     <Line
       data={{
@@ -62,7 +67,7 @@ const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2Stat
             borderColor: 'rgb(37, 99, 235)',
             backgroundColor: 'rgba(37, 99, 235, 0.2)',
             pointBackgroundColor: 'rgb(37, 99, 235)',
-            pointRadius: 3,
+            pointRadius: isLongRange ? 1.5 : 3,
             fill: true,
             tension: 0.35,
             spanGaps: true,
@@ -73,8 +78,9 @@ const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2Stat
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          ...chartPluginsBase,
           legend: { position: 'top' as const },
-          title: { display: true, text: 'MERRA2 CNN PM2.5 Time Series' },
+          title: { display: true, text: 'MERRA2 CNN PM2.5 Daily Mean Time Series' },
           tooltip: {
             callbacks: {
               label: (ctx: { parsed?: { y: number | null } }) => {
@@ -89,11 +95,18 @@ const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2Stat
           y: {
             beginAtZero: true,
             title: { display: true, text: 'PM2.5 (µg/m³)' },
+            ticks: { callback: (v: string | number) => formatChartTick(v) },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
           },
           x: {
             title: { display: true, text: 'Date' },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
+            ticks: {
+              autoSkip: true,
+              maxTicksLimit,
+              maxRotation: 35,
+              minRotation: 0,
+            },
           },
         },
       }}

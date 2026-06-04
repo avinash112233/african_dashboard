@@ -13,6 +13,7 @@ import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import type { FireDailyStats } from '../../utils/fireAnalytics';
+import { chartPluginsBase, formatChartTick } from '../../utils/chartFormat';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
@@ -31,7 +32,8 @@ const FireAverageFrpTimeSeriesChart = ({ dailyStats, startDate, endDate }: FireA
   for (let d = startDate.startOf('day'); !d.isAfter(endDate.startOf('day'), 'day'); d = d.add(1, 'day')) {
     const key = d.format('YYYY-MM-DD');
     labels.push(formatDisplayDate(key));
-    values.push(dateToTotalFrp.get(key) ?? null);
+    const raw = dateToTotalFrp.get(key);
+    values.push(raw != null && Number.isFinite(raw) ? Math.round(raw * 100) / 100 : null);
   }
 
   const hasAnyFrp = values.some((v) => v != null && Number.isFinite(v));
@@ -65,6 +67,7 @@ const FireAverageFrpTimeSeriesChart = ({ dailyStats, startDate, endDate }: FireA
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          ...chartPluginsBase,
           legend: { position: 'top' as const },
           title: { display: true, text: 'Total FRP Time Series' },
           tooltip: {
@@ -81,6 +84,7 @@ const FireAverageFrpTimeSeriesChart = ({ dailyStats, startDate, endDate }: FireA
           y: {
             beginAtZero: true,
             title: { display: true, text: 'Total FRP (MW)' },
+            ticks: { callback: (v: string | number) => formatChartTick(v) },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
           },
           x: {

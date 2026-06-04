@@ -1,7 +1,6 @@
 /**
- * Canvas Fire Layer – AERONET and fire hotspot markers using Leaflet canvas rendering.
- * Uses a single LayerGroup and L.circleMarker with a shared L.canvas() renderer so
- * markers stay perfectly synced with the map during zoom/pan and are not re-created on zoom.
+ * AERONET + VIIRS fire markers on a shared canvas renderer.
+ * Fires: viewport filter + sampling, built off-map then shown in one step (no heatmap).
  */
 
 import { useEffect, useRef, memo } from 'react';
@@ -9,9 +8,9 @@ import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
-import { getAODLevelColor, getAODLevelLabel } from '../../utils/aodUtils';
+import { getAODLevelColor } from '../../utils/aodUtils';
 
-const MAX_FIRE_MARKERS = 80000;
+const MAX_FIRE_MARKERS = 20000;
 
 function sampleFirePoints(points: FIRMSFirePoint[], max: number): FIRMSFirePoint[] {
   if (points.length <= max) return points;
@@ -44,6 +43,20 @@ function sampleFirePoints(points: FIRMSFirePoint[], max: number): FIRMSFirePoint
   return result;
 }
 
+function pointsInBounds<T extends { latitude: number; longitude: number }>(
+  items: T[],
+  bounds: L.LatLngBounds,
+  pad = 0.25
+): T[] {
+  const south = bounds.getSouth() - pad;
+  const north = bounds.getNorth() + pad;
+  const west = bounds.getWest() - pad;
+  const east = bounds.getEast() + pad;
+  return items.filter(
+    (p) => p.latitude >= south && p.latitude <= north && p.longitude >= west && p.longitude <= east
+  );
+}
+
 interface CanvasFireLayerProps {
   firePoints: FIRMSFirePoint[];
   onFireClick?: (fire: FIRMSFirePoint) => void;
@@ -51,6 +64,8 @@ interface CanvasFireLayerProps {
   siteAodMap?: SiteAODMap;
   onAeronetSiteClick?: (site: AERONETSite) => void;
   allowPointerEvents?: boolean;
+  showAeronet?: boolean;
+  showFires?: boolean;
 }
 
 const CanvasFireLayer = memo(function CanvasFireLayer({
@@ -60,13 +75,17 @@ const CanvasFireLayer = memo(function CanvasFireLayer({
   siteAodMap = {},
   onAeronetSiteClick,
   allowPointerEvents = true,
+  showAeronet = false,
+  showFires = false,
 }: CanvasFireLayerProps) {
   const map = useMap();
-  const groupRef = useRef<L.LayerGroup | null>(null);
-  const onFireClickRef = useRef<typeof onFireClick>(onFireClick);
-  const onAeronetSiteClickRef = useRef<typeof onAeronetSiteClick>(onAeronetSiteClick);
+  const aeronetGroupRef = useRef<L.LayerGroup | null>(null);
+  const fireGroupRef = useRef<L.LayerGroup | null>(null);
+  const rendererRef = useRef<L.Canvas | null>(null);
+  const onFireClickRef = useRef(onFireClick);
+  const onAeronetSiteClickRef = useRef(onAeronetSiteClick);
+  const fireBuildGenRef = useRef(0);
 
-  // Keep callback refs up-to-date without forcing marker layer rebuilds.
   useEffect(() => {
     onFireClickRef.current = onFireClick;
   }, [onFireClick]);
@@ -77,98 +96,134 @@ const CanvasFireLayer = memo(function CanvasFireLayer({
 
   useEffect(() => {
     if (!map) return;
+    if (!rendererRef.current) rendererRef.current = L.canvas({ padding: 0.5 });
+  }, [map]);
 
-    const sharedRenderer = L.canvas();
-    const group = (groupRef.current = L.layerGroup());
+  useEffect(() => {
+    if (!map || !showAeronet) {
+      if (aeronetGroupRef.current) {
+        map.removeLayer(aeronetGroupRef.current);
+        aeronetGroupRef.current = null;
+      }
+      return;
+    }
 
+    const renderer = rendererRef.current ?? L.canvas({ padding: 0.5 });
+    rendererRef.current = renderer;
+
+    if (aeronetGroupRef.current) {
+      map.removeLayer(aeronetGroupRef.current);
+      aeronetGroupRef.current = null;
+    }
+
+    const group = L.layerGroup();
     const aodMap = siteAodMap ?? {};
-    const sitesToShow = aeronetSites ?? [];
-    const firesToShow = sampleFirePoints(firePoints, MAX_FIRE_MARKERS);
 
-    for (const site of sitesToShow) {
+    for (const site of aeronetSites) {
       const aod = aodMap[site.site] ?? aodMap[site.name ?? ''];
       const hasData = aod?.hasData === true;
       const latestAod =
         hasData && aod
           ? (aod.AOD_500nm ?? aod.AOD_675nm ?? aod.AOD_870nm ?? aod.AOD_1020nm)
           : undefined;
-      let fillColor: string;
-      let strokeColor: string;
-      let tooltipText: string;
-      if (!hasData || latestAod == null) {
-        // Slightly darker gray fill, but no visible stroke
-        fillColor = 'rgba(80, 80, 80, 0.9)';
-        strokeColor = 'rgba(0, 0, 0, 0)';
-        tooltipText = 'No data available';
-      } else {
-        // Use AOD color as fill, no visible stroke
-        fillColor = getAODLevelColor(latestAod);
-        strokeColor = 'rgba(0, 0, 0, 0)';
-        const label = getAODLevelLabel(latestAod);
-        tooltipText = label
-          ? `${site.name ?? site.site}: ${label} (AOD ${latestAod.toFixed(3)})`
-          : `${site.name ?? site.site}: AOD ${latestAod.toFixed(3)}`;
-      }
+      const fillColor =
+        !hasData || latestAod == null ? 'rgba(80, 80, 80, 0.9)' : getAODLevelColor(latestAod);
 
       const marker = L.circleMarker([site.latitude, site.longitude], {
-        radius: 10,
+        radius: 8,
         fillColor,
-        color: strokeColor,
+        color: 'rgba(0, 0, 0, 0)',
         weight: 0,
         opacity: 1,
         fillOpacity: 0.9,
-        renderer: sharedRenderer,
+        renderer,
         interactive: allowPointerEvents,
       });
       if (allowPointerEvents) {
-        marker.bindTooltip(tooltipText, {
-          permanent: false,
-          direction: 'top',
-          className: 'canvas-fire-layer-tooltip',
-        });
-        marker.on('click', () => {
-          onAeronetSiteClickRef.current?.(site);
-        });
+        marker.on('click', () => onAeronetSiteClickRef.current?.(site));
       }
       marker.addTo(group);
     }
 
-    for (const fire of firesToShow) {
-      const marker = L.circleMarker([fire.latitude, fire.longitude], {
-        radius: 3,
-        fillColor: '#ff0000',
-        color: 'rgba(255, 255, 255, 0.9)',
-        weight: 1,
-        opacity: 1,
-        fillOpacity: 1,
-        renderer: sharedRenderer,
-        interactive: allowPointerEvents,
-      });
-      if (allowPointerEvents) {
-        marker.bindTooltip(
-          `Fire: ${fire.acq_date} ${fire.acq_time ?? ''} (${fire.latitude.toFixed(4)}, ${fire.longitude.toFixed(4)})`,
-          { permanent: false, direction: 'top', className: 'canvas-fire-layer-tooltip' }
-        );
-        marker.on('click', () => {
-          onFireClickRef.current?.(fire);
-        });
-      }
-      marker.addTo(group);
-    }
-
-    group.addTo(map);
+    aeronetGroupRef.current = group;
+    if (aeronetSites.length > 0) group.addTo(map);
 
     return () => {
-      map.removeLayer(group);
-      groupRef.current = null;
+      if (aeronetGroupRef.current) {
+        map.removeLayer(aeronetGroupRef.current);
+        aeronetGroupRef.current = null;
+      }
     };
-  }, [
-    map,
-    firePoints,
-    aeronetSites,
-    siteAodMap,
-    allowPointerEvents,
-  ]);
+  }, [map, showAeronet, aeronetSites, siteAodMap, allowPointerEvents]);
+
+  useEffect(() => {
+    if (!map || !showFires) {
+      if (fireGroupRef.current) {
+        map.removeLayer(fireGroupRef.current);
+        fireGroupRef.current = null;
+      }
+      return;
+    }
+
+    const gen = ++fireBuildGenRef.current;
+    const renderer = rendererRef.current ?? L.canvas({ padding: 0.5 });
+    rendererRef.current = renderer;
+
+    const mountFires = () => {
+      if (fireBuildGenRef.current !== gen) return;
+
+      if (fireGroupRef.current) {
+        map.removeLayer(fireGroupRef.current);
+        fireGroupRef.current = null;
+      }
+
+      const bounds = map.getBounds();
+      const visible = pointsInBounds(firePoints, bounds);
+      const firesToShow = sampleFirePoints(visible, MAX_FIRE_MARKERS);
+      const group = L.layerGroup();
+
+      for (const fire of firesToShow) {
+        const marker = L.circleMarker([fire.latitude, fire.longitude], {
+          radius: 3,
+          fillColor: '#ff0000',
+          color: 'rgba(255, 255, 255, 0.9)',
+          weight: 1,
+          opacity: 1,
+          fillOpacity: 1,
+          renderer,
+          interactive: allowPointerEvents,
+        });
+        if (allowPointerEvents) {
+          marker.on('click', () => onFireClickRef.current?.(fire));
+        }
+        marker.addTo(group);
+      }
+
+      fireGroupRef.current = group;
+      if (firesToShow.length > 0) group.addTo(map);
+    };
+
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(mountFires, 150);
+    };
+
+    mountFires();
+    map.on('moveend', schedule);
+    map.on('zoomend', schedule);
+
+    return () => {
+      fireBuildGenRef.current += 1;
+      if (debounce) clearTimeout(debounce);
+      map.off('moveend', schedule);
+      map.off('zoomend', schedule);
+      if (fireGroupRef.current) {
+        map.removeLayer(fireGroupRef.current);
+        fireGroupRef.current = null;
+      }
+    };
+  }, [map, showFires, firePoints, allowPointerEvents]);
 
   return null;
 });

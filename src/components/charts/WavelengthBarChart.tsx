@@ -8,6 +8,8 @@ import {
   Legend,
 } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
+import type { TooltipItem } from 'chart.js';
+import { chartPluginsBase, formatChartTick, tooltipLine } from '../../utils/chartFormat';
 
 ChartJS.register(
   CategoryScale,
@@ -35,7 +37,9 @@ const WavelengthBarChart = ({ data }: WavelengthBarChartProps) => {
   const values = hasData
     ? wavelengths.map((w) => {
         const vals = data!.map((d) => d[w.key]).filter((v) => v != null && !isNaN(v));
-        return vals.length > 0 ? vals.reduce((a, b) => a! + b!, 0)! / vals.length : null;
+        return vals.length > 0
+          ? Number((vals.reduce((a, b) => a! + b!, 0)! / vals.length).toFixed(2))
+          : null;
       })
     : [null, null, null, null];
 
@@ -66,16 +70,26 @@ const WavelengthBarChart = ({ data }: WavelengthBarChartProps) => {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
+      ...chartPluginsBase,
       legend: { position: 'top' as const },
       title: {
         display: true,
         text: 'AOD by Wavelength',
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx: TooltipItem<'bar'>) =>
+            tooltipLine(ctx.dataset.label ?? 'AOD', ctx.parsed.y),
+        },
       },
     },
     scales: {
       y: {
         beginAtZero: true,
         title: { display: true, text: 'AOD Value' },
+        ticks: {
+          callback: (v: string | number) => formatChartTick(v),
+        },
       },
       x: {
         title: { display: true, text: 'Wavelength' },

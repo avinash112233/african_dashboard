@@ -12,6 +12,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
 import { formatDisplayDate, normalizeAeronetDate } from '../../utils/dateFormat';
+import { chartPluginsBase, formatChartTick, tooltipLine } from '../../utils/chartFormat';
 import { getAODLevelColor } from '../../utils/aodUtils';
 
 ChartJS.register(
@@ -101,6 +102,7 @@ const TimeSeriesChart = ({ data, startDate, endDate }: TimeSeriesChartProps) => 
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
+      ...chartPluginsBase,
       legend: {
         position: 'top' as const,
       },
@@ -115,7 +117,7 @@ const TimeSeriesChart = ({ data, startDate, endDate }: TimeSeriesChartProps) => 
             if (val == null || (typeof val === 'number' && isNaN(val))) {
               return `${ctx.label ?? ''}: No measurement`;
             }
-            return `${ctx.label ?? ''}: ${Number(val).toFixed(3)}`;
+            return tooltipLine(ctx.label ?? 'AOD', val);
           },
         },
       },
@@ -126,6 +128,9 @@ const TimeSeriesChart = ({ data, startDate, endDate }: TimeSeriesChartProps) => 
         title: {
           display: true,
           text: 'AOD',
+        },
+        ticks: {
+          callback: (v: string | number) => formatChartTick(v),
         },
         grid: {
           color: 'rgba(0, 0, 0, 0.06)',

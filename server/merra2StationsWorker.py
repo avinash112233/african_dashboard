@@ -164,11 +164,15 @@ def cmd_timeseries(sitename: str, start: str, end: str):
         df = df.dropna(subset=["pm25"])
         if df.empty:
             continue
-        tmp = pd.DataFrame()
-        tmp["datetime"] = df["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        tmp["pm25"] = df["pm25"].round(2)
-        rows.extend(tmp.to_dict(orient="records"))
-    rows = sorted(rows, key=lambda r: r["datetime"])
+        daily = (
+            df.assign(date=df["datetime"].dt.strftime("%Y-%m-%d"))
+            .groupby("date", as_index=False)
+            .agg(pm25=("pm25", "mean"), datetime=("datetime", "max"))
+        )
+        daily["pm25"] = daily["pm25"].round(2)
+        daily["datetime"] = daily["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows.extend(daily.to_dict(orient="records"))
+    rows = sorted(rows, key=lambda r: r["date"])
     if not rows:
         fail(6, f'No PM2.5 time-series data found for station "{sitename}" between {start} and {end}.')
     print(

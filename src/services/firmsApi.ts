@@ -10,6 +10,9 @@
 
 const FIRMS_KEY = import.meta.env.VITE_FIRMS_MAP_KEY || '';
 const API_BASE = '/api/firms';
+const WFS_CACHE_TTL_MS = 15 * 60 * 1000;
+let wfsCache: { data: FIRMSFirePoint[]; ts: number } | null = null;
+let wfsInflight: Promise<FIRMSFirePoint[]> | null = null;
 
 export interface FIRMSFirePoint {
   latitude: number;
@@ -141,7 +144,7 @@ function wfsFeatureToFirePoint(f: WFSFireFeature): FIRMSFirePoint | null {
  * Uses Northern_and_Central_Africa + Southern_Africa layers for faster loading.
  * Falls back to CSV Area API if WFS fails (500, network error, etc.).
  */
-export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
+async function fetchNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
   if (!FIRMS_KEY) {
     console.warn('[FIRMS] No VITE_FIRMS_MAP_KEY in .env');
     return [];
@@ -178,4 +181,22 @@ export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
     console.warn('[FIRMS WFS] Failed, falling back to CSV API:', err);
     return getNOAA20VIIRS7DayDataset();
   }
+}
+
+/** Cached 7-day VIIRS fire feed — avoids refetch on every layer switch. */
+export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
+  const now = Date.now();
+  if (wfsCache && now - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
+  if (wfsInflight) return wfsInflight;
+
+  wfsInflight = fetchNOAA21VIIRS7DayFromWFS()
+    .then((data) => {
+      wfsCache = { data, ts: Date.now() };
+      return data;
+    })
+    .finally(() => {
+      wfsInflight = null;
+    });
+
+  return wfsInflight;
 }

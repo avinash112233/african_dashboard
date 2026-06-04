@@ -20,6 +20,30 @@ import {
 const app = express();
 const PORT = process.env.MERRA2_API_PORT || 3001;
 
+/**
+ * Proxy AERONET (including AAQE forecast GeoJSON under /data_push/...) for production.
+ * Vite only proxies /api/aeronet during `npm run dev`; static hosting needs this or nginx.
+ */
+app.use('/api/aeronet', async (req, res) => {
+  try {
+    const pathAndQuery = req.originalUrl.replace(/^\/api\/aeronet/, '') || '/';
+    const target = `https://aeronet.gsfc.nasa.gov${pathAndQuery.startsWith('/') ? '' : '/'}${pathAndQuery}`;
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: { 'User-Agent': 'african-dashboard/1.0' },
+    });
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.status(upstream.status);
+    const body = Buffer.from(await upstream.arrayBuffer());
+    res.send(body);
+  } catch (err) {
+    console.error('[AERONET proxy] Error:', err);
+    res.status(502).json({ error: err?.message || 'AERONET proxy failed' });
+  }
+});
+
 app.get('/api/merra2/pm25/grid', async (req, res) => {
   try {
     const dateParam = req.query.date || new Date().toISOString().slice(0, 10);

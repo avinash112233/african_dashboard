@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { MapContainer, TileLayer, LayerGroup, LayersControl, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
+import Merra2StationsLayer from './Merra2StationsLayer';
 import L from 'leaflet';
 import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
@@ -11,10 +12,20 @@ import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
 import type { LatLonBounds } from '../../utils/geoUtils';
 import type { MERRA2StationDailyRecord } from '../../services/merra2Api';
+import type { AAQEForecastPoint } from '../../services/aaqeForecastApi';
+import { getAaqeDisplayValues } from '../../services/aaqeForecastApi';
 import { calculateAQIFromPm25, getAqiCategory } from '../../utils/aqiUtils';
+import type { AaqeDisplayType } from '../../services/aaqeForecastApi';
 
-const EMPTY_FIRE_POINTS: FIRMSFirePoint[] = [];
-const EMPTY_AERONET_SITES: AERONETSite[] = [];
+function getContrastingTextColor(hexColor: string): string {
+  const hex = hexColor.replace('#', '');
+  if (hex.length !== 6) return '#111827';
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.65 ? '#111827' : '#ffffff';
+}
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -31,6 +42,7 @@ interface MapVisualizationProps {
   showAeronet: boolean;
   showVIIRSImagery?: boolean;
   showMERRA2PM25?: boolean;
+  showAAQEForecast?: boolean;
   onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
   onAeronetSiteClick?: (site: AERONETSite) => void;
@@ -48,6 +60,11 @@ interface MapVisualizationProps {
   onFireChartBoundsCommit?: (bounds: LatLonBounds) => void;
   merra2Stations?: MERRA2StationDailyRecord[];
   onMerra2StationClick?: (station: MERRA2StationDailyRecord) => void;
+  aaqeForecastPoints?: AAQEForecastPoint[];
+  aaqeForecastTimeCode?: string;
+  aaqeForecastDate?: string;
+  aaqeDisplayType?: AaqeDisplayType;
+  onAAQEForecastClick?: (point: AAQEForecastPoint) => void;
 }
 
 const MapVisualization = ({
@@ -58,6 +75,7 @@ const MapVisualization = ({
   showAeronet,
   showVIIRSImagery = false,
   showMERRA2PM25 = false,
+  showAAQEForecast = false,
   onPm25Sample,
   onFireClick,
   onAeronetSiteClick,
@@ -73,6 +91,11 @@ const MapVisualization = ({
   onFireChartBoundsCommit,
   merra2Stations = [],
   onMerra2StationClick,
+  aaqeForecastPoints = [],
+  aaqeForecastTimeCode = '1330',
+  aaqeForecastDate: _aaqeForecastDate,
+  aaqeDisplayType = 'DAILY_AQI',
+  onAAQEForecastClick,
 }: MapVisualizationProps) => {
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
 
@@ -134,56 +157,101 @@ const MapVisualization = ({
       )}
 
       {showMERRA2PM25 && (
+        <Merra2StationsLayer
+          stations={merra2Stations}
+          active
+          onStationClick={(s) => {
+            onMerra2StationClick?.(s);
+            onPm25Sample?.({
+              lat: s.latitude,
+              lon: s.longitude,
+              value: s.pm25,
+              date: s.date,
+              min: 0,
+              max: 0,
+              units: 'µg/m³',
+              source: 'gesdisc',
+            });
+          }}
+        />
+      )}
+
+      {showAAQEForecast && (
         <>
-          {merra2Stations.map((s) => {
-            const aqi = calculateAQIFromPm25(s.pm25);
-            const aqiCategory = getAqiCategory(aqi);
+          {aaqeForecastPoints.map((p, idx) => {
+            const { aqi: displayAqi, pm: displayPm, valueForColor } = getAaqeDisplayValues(
+              p.properties,
+              aaqeDisplayType,
+              aaqeForecastTimeCode
+            );
+            const typeLabels: Record<AaqeDisplayType, string> = {
+              DAILY_AQI: 'DAILY AQI',
+              AQI: 'AQI',
+              PM: 'PM 2.5',
+            };
+            const aqiLabel = typeLabels[aaqeDisplayType];
+            const colorAqi =
+              aaqeDisplayType === 'PM' && displayPm != null
+                ? calculateAQIFromPm25(displayPm)
+                : valueForColor;
+            const aqiCategory = getAqiCategory(colorAqi);
             return (
-            <CircleMarker
-              key={`merra2-${s.sitename}-${s.latitude}-${s.longitude}`}
-              center={[s.latitude, s.longitude]}
-              radius={6}
-              pathOptions={{
-                color: '#334155',
-                weight: 0.7,
-                fillColor: aqiCategory.color,
-                fillOpacity: 0.9,
-              }}
-              eventHandlers={{
-                click: () => {
-                  onMerra2StationClick?.(s);
-                  onPm25Sample?.({
-                    lat: s.latitude,
-                    lon: s.longitude,
-                    value: s.pm25,
-                    date: s.date,
-                    min: 0,
-                    max: 0,
-                    units: 'µg/m³',
-                    source: 'gesdisc',
-                  });
-                },
-              }}
-            >
-              <Tooltip direction="top" offset={[0, -4]}>
-                {s.sitename}: AQI {aqi ?? '—'} ({aqiCategory.label}) · PM2.5 {s.pm25.toFixed(2)} µg/m³
-              </Tooltip>
-            </CircleMarker>
+              <CircleMarker
+                key={`aaqe-${p.properties.Station ?? p.properties.Site_Name ?? idx}-${p.latitude}-${p.longitude}`}
+                center={[p.latitude, p.longitude]}
+                radius={6}
+                pathOptions={{
+                  color: '#334155',
+                  weight: 0.7,
+                  fillColor: aqiCategory.color,
+                  fillOpacity: 0.9,
+                }}
+                eventHandlers={{
+                  click: () => onAAQEForecastClick?.(p),
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -8]} className="aaqe-hover-tooltip">
+                  <div
+                    className="aaqe-tooltip-card"
+                    style={{ backgroundColor: aqiCategory.color, color: getContrastingTextColor(aqiCategory.color) }}
+                  >
+                    <div className="aaqe-tooltip-close" aria-hidden="true" style={{ color: getContrastingTextColor(aqiCategory.color) }}>×</div>
+                    <div><strong>Site Name:</strong> {(p.properties.Site_Name as string) ?? 'Forecast Site'}</div>
+                    <div><strong>Source:</strong> African AQE</div>
+                    <div className="aaqe-tooltip-summary">
+                      {aaqeDisplayType === 'PM' ? (
+                        <>
+                          <strong>{aqiLabel}:</strong> {displayPm != null ? Math.round(displayPm) : '—'} µgm<sup>-3</sup>
+                        </>
+                      ) : (
+                        <>
+                          <strong>{aqiLabel}:</strong> {displayAqi != null ? Math.round(displayAqi) : '—'}{' '}
+                          <strong>PM2.5:</strong> {displayPm != null ? Math.round(displayPm) : '—'} µgm<sup>-3</sup>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </Tooltip>
+              </CircleMarker>
             );
           })}
         </>
       )}
 
       {(showFires || showAeronet) && (
+        <CanvasFireLayer
+          showAeronet={showAeronet}
+          showFires={showFires}
+          firePoints={firePoints}
+          onFireClick={onFireClick}
+          aeronetSites={aeronetSites}
+          siteAodMap={siteAodMap}
+          onAeronetSiteClick={onAeronetSiteClick}
+          allowPointerEvents={!circleSelectActive && !fireChartRectDrawActive}
+        />
+      )}
+      {showFires && (
         <>
-          <CanvasFireLayer
-            firePoints={showFires ? firePoints : EMPTY_FIRE_POINTS}
-            onFireClick={onFireClick}
-            aeronetSites={showAeronet ? aeronetSites : EMPTY_AERONET_SITES}
-            siteAodMap={siteAodMap}
-            onAeronetSiteClick={onAeronetSiteClick}
-            allowPointerEvents={!circleSelectActive && !fireChartRectDrawActive}
-          />
           {showFires && circleSelectActive && (
             <CircleSelectLayer
               center={circleCenter}
@@ -226,6 +294,26 @@ const MapVisualization = ({
           Lat: {cursorCoords.lat.toFixed(4)}  Lon: {cursorCoords.lng.toFixed(4)}
         </div>
       )}
+      {showAAQEForecast && (
+        <div className="aaqe-bottom-legend" aria-label="AQI category legend">
+          <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
+            <span style={{ background: '#00e400' }}>Good</span>
+            <span style={{ background: '#ffff00' }}>Moderate</span>
+            <span style={{ background: '#ff7e00' }}>Unhealthy for sensitive groups</span>
+            <span style={{ background: '#ff0000', color: '#fff' }}>Unhealthy</span>
+            <span style={{ background: '#8f3f97', color: '#fff' }}>Very unhealthy</span>
+            <span style={{ background: '#7e0023', color: '#fff' }}>Hazardous</span>
+          </div>
+          <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--ranges">
+            <span>0-50</span>
+            <span>51-100</span>
+            <span>101-150</span>
+            <span>151-200</span>
+            <span>201-300</span>
+            <span>301+</span>
+          </div>
+        </div>
+      )}
     </MapContainer>
     </div>
   );
@@ -239,4 +327,4 @@ function MapMouseEvents({ onCoords }: { onCoords: (c: { lat: number; lng: number
   return null;
 }
 
-export default MapVisualization;
+export default memo(MapVisualization);

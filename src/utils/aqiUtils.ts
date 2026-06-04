@@ -47,3 +47,10 @@ export function getAqiCategory(aqi: number | null): { label: string; color: stri
   return { label: 'Hazardous', color: '#7e0023' };
 }
 
+/** Text on AQI-colored bars (matches NASA aqforecast / aeronet_aq `setTextColor`). */
+export function getAqiBarLabelColor(aqi: number): string {
+  if (aqi <= 50) return '#ffffff';
+  if (aqi <= 150) return '#111827';
+  return '#ffffff';
+}
+

@@ -1,3 +1,8 @@
+.pm25-gridlayer--smooth {
+  pointer-events: none;
+}
+
 .pm25-gridlayer--smooth .pm25-grid-tile {
   image-rendering: auto;
+  pointer-events: none;
 }

@@ -13,6 +13,7 @@ import { Line } from 'react-chartjs-2';
 import dayjs from 'dayjs';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import type { FireDailyStats } from '../../utils/fireAnalytics';
+import { chartPluginsBase } from '../../utils/chartFormat';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
@@ -64,6 +65,7 @@ const FireCountTimeSeriesChart = ({ dailyStats, startDate, endDate }: FireCountT
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
+          ...chartPluginsBase,
           legend: { position: 'top' as const },
           title: { display: true, text: 'Fire Count Time Series' },
         },
@@ -71,6 +73,12 @@ const FireCountTimeSeriesChart = ({ dailyStats, startDate, endDate }: FireCountT
           y: {
             beginAtZero: true,
             title: { display: true, text: 'Fire detections' },
+            ticks: {
+              callback: (v: string | number) => {
+                const n = typeof v === 'number' ? v : Number(v);
+                return Number.isFinite(n) ? String(Math.round(n)) : String(v);
+              },
+            },
             grid: { color: 'rgba(0, 0, 0, 0.06)' },
           },
           x: {
