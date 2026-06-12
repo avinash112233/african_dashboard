@@ -1,11 +1,3 @@
-/**
- * Express backend for African Aerosol Dashboard
- * Serves MERRA2 PM2.5 grid API – connects to GES DISC when credentials are set.
- *
- * Set EARTHDATA_USERNAME and EARTHDATA_PASSWORD for real data.
- * Create account: https://urs.earthdata.nasa.gov/
- */
-
 import 'dotenv/config';
 import express from 'express';
 import { fetchMerra2Grid } from './merra2.js';
@@ -20,10 +12,8 @@ import {
 const app = express();
 const PORT = process.env.MERRA2_API_PORT || 3001;
 
-/**
- * Proxy AERONET (including AAQE forecast GeoJSON under /data_push/...) for production.
- * Vite only proxies /api/aeronet during `npm run dev`; static hosting needs this or nginx.
- */
+// Proxy AERONET and AAQE GeoJSON requests — Vite dev proxy only works locally;
+// production traffic is routed here via Nginx.
 app.use('/api/aeronet', async (req, res) => {
   try {
     const pathAndQuery = req.originalUrl.replace(/^\/api\/aeronet/, '') || '/';
@@ -36,8 +26,7 @@ app.use('/api/aeronet', async (req, res) => {
     if (ct) res.setHeader('Content-Type', ct);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(upstream.status);
-    const body = Buffer.from(await upstream.arrayBuffer());
-    res.send(body);
+    res.send(Buffer.from(await upstream.arrayBuffer()));
   } catch (err) {
     console.error('[AERONET proxy] Error:', err);
     res.status(502).json({ error: err?.message || 'AERONET proxy failed' });
@@ -48,12 +37,9 @@ app.get('/api/merra2/pm25/grid', async (req, res) => {
   try {
     const dateParam = req.query.date || new Date().toISOString().slice(0, 10);
     const [y, m, d] = dateParam.split('-').map(Number);
-    const year = y || new Date().getFullYear();
-    // Keep lower bound for dataset start year; do not hard-cap upper year
-    // so newly published years can be requested without code changes.
-    const normalizedYear = Math.max(2000, year);
-    const normalizedDate = `${normalizedYear}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
-
+    // Floor at dataset start year; no upper cap so newly published years work automatically.
+    const year = Math.max(2000, y || new Date().getFullYear());
+    const normalizedDate = `${year}-${String(m || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}`;
     const grid = await fetchMerra2Grid(normalizedDate);
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -123,8 +109,6 @@ app.get('/api/merra2/latest-date', async (_req, res) => {
 app.listen(PORT, () => {
   console.log(`[MERRA2 API] Running on http://localhost:${PORT}`);
   if (!process.env.MERRA2_PARQUET_DIR) {
-    console.log(
-      '[MERRA2 API] MERRA2_PARQUET_DIR is not set. Station endpoints will fail until parquet directory is configured.'
-    );
+    console.warn('[MERRA2 API] MERRA2_PARQUET_DIR not set — station endpoints will fail.');
   }
 });

@@ -1,5 +1,4 @@
 export type AnalysisDataSource = 'aeronet' | 'merra2' | 'aaqe' | 'firms';
-
 export type AnalysisAnchorSource = 'aeronet' | 'merra2' | 'aaqe' | 'fire';
 
 export type AnalysisVariableId =
@@ -29,13 +28,11 @@ export interface AnalysisLocationContext {
   label: string;
   latitude: number;
   longitude: number;
-  /** How this anchor was set (map click / sidebar). */
   anchorSource: AnalysisAnchorSource;
   aeronetQuerySite?: string;
   merra2Sitename?: string;
-  /** Distance from anchor to linked MERRA2 station (km), when resolved. */
   merra2LinkDistanceKm?: number;
-  /** True when the linked station is beyond the preferred colocation radius. */
+  /** True when the linked MERRA2 station exceeds the preferred colocation radius. */
   merra2LinkBeyondPreferred?: boolean;
 }
 

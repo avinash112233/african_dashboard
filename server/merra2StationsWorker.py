@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+MERRA2 station Parquet worker — called by merra2Stations.js via execFile.
+Commands: stations, station-timeseries, station-list, latest-date
+Parquet files must follow the naming convention: YYYY_AfricanStationsFull.parquet
+"""
 import argparse
 import json
 import os
@@ -58,9 +63,7 @@ def max_datetime_for_file(p: Path):
     if df.empty:
         return None
     dt = pd.to_datetime(df[dt_col], utc=True, errors="coerce")
-    if dt.isna().all():
-        return None
-    return dt.max()
+    return None if dt.isna().all() else dt.max()
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -68,42 +71,38 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     def pick(*candidates):
         for c in candidates:
-            key = c.lower()
-            if key in lower_map:
-                return lower_map[key]
+            if c.lower() in lower_map:
+                return lower_map[c.lower()]
         return None
 
     datetime_col = pick("DATETIME", "datetime", "DateTime", "date_time")
     sitename_col = pick("sitename", "siteName", "SITE_NAME", "StationName")
-    country_col = pick("Country or Area Name", "country", "Country")
-    address_col = pick("Full Address", "full_address", "address")
-    lat_col = pick("Latitude", "latitude", "LATITUDE")
-    lon_col = pick("Longitude", "longitude", "LONGITUDE")
-    pm25_col = pick("MERRA2_CNN_Surface_PM25", "merra2_cnn_surface_pm25", "PM25", "pm25", "PM2.5")
+    country_col  = pick("Country or Area Name", "country", "Country")
+    address_col  = pick("Full Address", "full_address", "address")
+    lat_col      = pick("Latitude", "latitude", "LATITUDE")
+    lon_col      = pick("Longitude", "longitude", "LONGITUDE")
+    pm25_col     = pick("MERRA2_CNN_Surface_PM25", "merra2_cnn_surface_pm25", "PM25", "pm25", "PM2.5")
 
     if not datetime_col or not sitename_col or not lat_col or not lon_col:
         fail(5, "Required columns missing in parquet file.")
 
     out = pd.DataFrame()
-    out["datetime"] = pd.to_datetime(df[datetime_col], utc=True, errors="coerce")
-    out["sitename"] = df[sitename_col].astype(str).str.strip()
-    out["country"] = df[country_col].astype(str).str.strip() if country_col else None
+    out["datetime"]    = pd.to_datetime(df[datetime_col], utc=True, errors="coerce")
+    out["sitename"]    = df[sitename_col].astype(str).str.strip()
+    out["country"]     = df[country_col].astype(str).str.strip() if country_col else None
     out["fullAddress"] = df[address_col].astype(str).str.strip() if address_col else None
-    out["latitude"] = pd.to_numeric(df[lat_col], errors="coerce")
-    out["longitude"] = pd.to_numeric(df[lon_col], errors="coerce")
-    out["pm25"] = pd.to_numeric(df[pm25_col], errors="coerce") if pm25_col else None
+    out["latitude"]    = pd.to_numeric(df[lat_col], errors="coerce")
+    out["longitude"]   = pd.to_numeric(df[lon_col], errors="coerce")
+    out["pm25"]        = pd.to_numeric(df[pm25_col], errors="coerce") if pm25_col else None
 
     out = out.dropna(subset=["datetime", "sitename", "latitude", "longitude"])
-    out = out[out["sitename"] != ""]
-    return out
+    return out[out["sitename"] != ""]
 
 
 def cmd_stations(date_str: str):
     validate_date(date_str, "date")
     year = int(date_str[:4])
-    p = year_file(year)
-    df = pd.read_parquet(p)
-    df = normalize_columns(df)
+    df = normalize_columns(pd.read_parquet(year_file(year)))
     start = pd.Timestamp(f"{date_str}T00:00:00Z")
     end = start + pd.Timedelta(days=1)
     df = df[(df["datetime"] >= start) & (df["datetime"] < end)]
@@ -127,8 +126,7 @@ def cmd_stations(date_str: str):
     grouped["pm25"] = grouped["pm25"].round(2)
     grouped["date"] = date_str
     grouped["datetime"] = grouped["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    grouped = grouped.sort_values("sitename")
-    print(json.dumps({"date": date_str, "stations": grouped.to_dict(orient="records")}))
+    print(json.dumps({"date": date_str, "stations": grouped.sort_values("sitename").to_dict(orient="records")}))
 
 
 def cmd_timeseries(sitename: str, start: str, end: str):
@@ -144,14 +142,13 @@ def cmd_timeseries(sitename: str, start: str, end: str):
     end_ts = pd.Timestamp(f"{end}T00:00:00Z") + pd.Timedelta(days=1)
     rows = []
     meta = None
+
     for year in range(int(start[:4]), int(end[:4]) + 1):
         try:
             p = year_file(year)
         except SystemExit:
-            # Parquet file for this year doesn't exist — skip silently.
-            continue
-        df = pd.read_parquet(p)
-        df = normalize_columns(df)
+            continue  # skip years with no parquet file
+        df = normalize_columns(pd.read_parquet(p))
         df = df[df["sitename"].str.lower() == station_lower]
         df = df[(df["datetime"] >= start_ts) & (df["datetime"] < end_ts)]
         if df.empty:
@@ -159,11 +156,11 @@ def cmd_timeseries(sitename: str, start: str, end: str):
         if meta is None:
             first = df.iloc[0]
             meta = {
-                "sitename": first["sitename"],
-                "country": first["country"],
+                "sitename":    first["sitename"],
+                "country":     first["country"],
                 "fullAddress": first["fullAddress"],
-                "latitude": float(first["latitude"]),
-                "longitude": float(first["longitude"]),
+                "latitude":    float(first["latitude"]),
+                "longitude":   float(first["longitude"]),
             }
         df = df.dropna(subset=["pm25"])
         if df.empty:
@@ -176,27 +173,20 @@ def cmd_timeseries(sitename: str, start: str, end: str):
         daily["pm25"] = daily["pm25"].round(2)
         daily["datetime"] = daily["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         rows.extend(daily.to_dict(orient="records"))
+
     rows = sorted(rows, key=lambda r: r["date"])
     if not rows:
         fail(6, f'No PM2.5 time-series data found for station "{sitename}" between {start} and {end}.')
-    print(
-        json.dumps(
-            {
-                "station": meta or {"sitename": sitename.strip()},
-                "start": start,
-                "end": end,
-                "points": rows,
-            }
-        )
-    )
+    print(json.dumps({
+        "station": meta or {"sitename": sitename.strip()},
+        "start": start,
+        "end": end,
+        "points": rows,
+    }))
 
 
 def _station_meta_from_file(p: Path) -> pd.DataFrame:
-    """Read only station identity columns from a parquet file and deduplicate.
-
-    Uses a case-insensitive column lookup so it works regardless of column
-    naming conventions in the parquet schema.
-    """
+    """Read only identity columns from one parquet file and deduplicate by sitename."""
     schema = pq.read_schema(p)
     lower_map = {c.lower(): c for c in schema.names}
 
@@ -215,8 +205,8 @@ def _station_meta_from_file(p: Path) -> pd.DataFrame:
     if not sitename_col or not lat_col or not lon_col:
         return pd.DataFrame()
 
-    cols_to_read = [c for c in [sitename_col, country_col, address_col, lat_col, lon_col] if c]
-    df = pd.read_parquet(p, columns=cols_to_read)
+    cols = [c for c in [sitename_col, country_col, address_col, lat_col, lon_col] if c]
+    df = pd.read_parquet(p, columns=cols)
 
     out = pd.DataFrame()
     out["sitename"]    = df[sitename_col].astype(str).str.strip()
@@ -231,11 +221,7 @@ def _station_meta_from_file(p: Path) -> pd.DataFrame:
 
 
 def cmd_station_list():
-    """Return unique stations from all year files.
-
-    Reads only the 5 coordinate/identity columns and deduplicates immediately —
-    much faster than iterating every row in a large parquet file.
-    """
+    """Return unique stations from all year files, reading only identity columns."""
     files = list_year_files()
     frames = []
     for p in files:
@@ -246,28 +232,25 @@ def cmd_station_list():
     if not frames:
         fail(6, "No stations found in parquet files.")
     combined = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["sitename"])
-    stations = []
-    for row in combined.sort_values("sitename").itertuples(index=False):
-        stations.append(
-            {
-                "sitename": row.sitename,
-                "country": row.country,
-                "fullAddress": row.fullAddress,
-                "latitude": float(row.latitude),
-                "longitude": float(row.longitude),
-            }
-        )
+    stations = [
+        {
+            "sitename":    row.sitename,
+            "country":     row.country,
+            "fullAddress": row.fullAddress,
+            "latitude":    float(row.latitude),
+            "longitude":   float(row.longitude),
+        }
+        for row in combined.sort_values("sitename").itertuples(index=False)
+    ]
     print(json.dumps({"stations": stations}))
 
 
 def cmd_latest_date():
     files = list_year_files()
-    # Fast path: latest timestamp should normally be in the newest yearly file.
-    newest = files[-1]
-    latest_ts = max_datetime_for_file(newest)
-    latest_file = newest.name if latest_ts is not None else None
+    # Start with the newest file (most likely to have the latest timestamp).
+    latest_ts = max_datetime_for_file(files[-1])
+    latest_file = files[-1].name if latest_ts is not None else None
 
-    # Fallback scan if newest file has no valid datetime values.
     if latest_ts is None:
         for p in reversed(files):
             max_dt = max_datetime_for_file(p)
@@ -277,15 +260,11 @@ def cmd_latest_date():
                 break
     if latest_ts is None:
         fail(6, "No datetime data found in parquet files.")
-    print(
-        json.dumps(
-            {
-                "latestDate": latest_ts.strftime("%Y-%m-%d"),
-                "latestDatetimeUtc": latest_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "sourceFile": latest_file,
-            }
-        )
-    )
+    print(json.dumps({
+        "latestDate":        latest_ts.strftime("%Y-%m-%d"),
+        "latestDatetimeUtc": latest_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sourceFile":        latest_file,
+    }))
 
 
 def main():
@@ -316,4 +295,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

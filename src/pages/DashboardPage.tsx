@@ -149,7 +149,6 @@ const DashboardPage = () => {
   const [aeronetError, setAeronetError] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
-  /** Persists across map layer switches; drives cross-layer Analysis panel. */
   const [analysisAnchor, setAnalysisAnchor] = useState<AnalysisLocationContext | null>(null);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -164,7 +163,7 @@ const DashboardPage = () => {
   const [fireAnalysisRange, setFireAnalysisRange] = useState<FireAnalysisRange>('7D');
 
   const getDateRange = (selectedDateStr: string, range: AnalysisRange): { startDate: string; endDate: string } => {
-    // Cap end at today — never request data beyond what's available.
+    // Cap end date at today so we never request data for future dates.
     const today = dayjs().startOf('day');
     const requested = dayjs(selectedDateStr, 'YYYY-MM-DD').startOf('day');
     const end = requested.isAfter(today) ? today : requested;
@@ -224,8 +223,8 @@ const DashboardPage = () => {
     return latest;
   }, [preparedFirePoints]);
 
-  // Anchor fire analysis windows to the freshest loaded FIRMS timestamp.
-  // This avoids empty/non-updating 24h/48h charts when the date picker differs from feed recency.
+  // Anchor the analysis window to the freshest FIRMS timestamp, not the date picker,
+  // to prevent empty 24h/48h charts when the selected date is newer than the feed.
   const fireRangeEnd = useMemo(
     () => (latestFireDateTime ? latestFireDateTime.endOf('minute') : dayjs(effectiveSelectedDateStr).endOf('day')),
     [latestFireDateTime, effectiveSelectedDateStr]
@@ -266,16 +265,13 @@ const DashboardPage = () => {
     return points;
   }, [showFires, firesInAnalysisRange]);
 
-  // Keep a consistent rolling AERONET window based on the selected date.
-  // When the user picks a date, we automatically set:
-  // - "To" = selected date
-  // - "From" = 7 days prior
+  // Sync AERONET date range to the selected date (rolling 7-day window).
   useEffect(() => {
     setAeronetDateTo(selectedDate);
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
 
-  // Fire hotspots: prefetch immediately on open (FIRMS is cached 15 min).
+  // Fire hotspots: prefetch on mount and when date changes (FIRMS is cached 15 min).
   useEffect(() => {
     let cancelled = false;
     setFireLoading(true);
@@ -289,14 +285,13 @@ const DashboardPage = () => {
     setAaqeTimeCode(getDefaultAaqeTimeCodeFromUtc());
   }, []);
 
-  // AAQE forecast: delayed prefetch so AERONET (same NASA API) gets priority.
+  // AAQE forecast: 1 s delayed prefetch so AERONET (same NASA API) gets priority on first load.
   useEffect(() => {
     const requested = selectedDate.isAfter(dayjs(), 'day')
       ? dayjs().format('YYYY-MM-DD')
       : selectedDate.format('YYYY-MM-DD');
 
     let cancelled = false;
-    // Short delay so AERONET site list gets a head-start (AAQE is now cached after first load).
     const startTimer = window.setTimeout(() => {
       if (cancelled) return;
       setAaqeLoading(true);
@@ -372,7 +367,7 @@ const DashboardPage = () => {
         if (!cancelled) setAaqeLoading(false);
       }
     })();
-    }, 1000); // 1 s delay — lets AERONET get a head-start; GeoJSON is cached after first load
+    }, 1000);
 
     return () => {
       cancelled = true;
@@ -402,7 +397,7 @@ const DashboardPage = () => {
     }
   }, [analysisStartDate, analysisEndDate, selectedSite?.site, selectedSite?.name, aeronetAodVersion]);
 
-  // AERONET AOD map colors: prefetch for active date (slight debounce).
+  // Debounced prefetch of AERONET AOD colors for the active date.
   useEffect(() => {
     const day = aeronetEnd.format('YYYY-MM-DD');
     let cancelled = false;
@@ -427,9 +422,9 @@ const DashboardPage = () => {
     setRightPanelOpen(true);
   }, []);
 
-  // AERONET site list: load on open, cached after first load.
+  // AERONET site list: load once on mount; cached in localStorage after that.
   useEffect(() => {
-    if (aeronetSites.length > 0) return; // already loaded
+    if (aeronetSites.length > 0) return;
     let cancelled = false;
     setAeronetLoading(true);
     setAeronetError(null);
@@ -453,7 +448,6 @@ const DashboardPage = () => {
     };
   }, [aeronetSites.length]);
 
-  // MERRA2 stations: prefetch on open and when date changes.
   useEffect(() => {
     let cancelled = false;
     const loadStations = async () => {
@@ -462,7 +456,6 @@ const DashboardPage = () => {
       setMerra2Notice(null);
       const requestedDate = merra2RequestedDate;
 
-      // Try selected date first so map points respond to date picker changes.
       try {
         const stations = await getMERRA2StationsByDate(requestedDate);
         if (cancelled) return;
@@ -487,7 +480,7 @@ const DashboardPage = () => {
         }
       }
 
-      // Fallback to latest available parquet date.
+      // Requested date has no data — fall back to the latest available Parquet date.
       try {
         let latestDate = merra2LatestDate;
         if (!latestDate) {
@@ -836,7 +829,6 @@ const DashboardPage = () => {
   return (
     <div className="dashboard-page">
         <div className="dashboard-layout">
-          {/* Left sidebar - Date & Data Layers */}
           <aside className="dashboard-sidebar-left">
             <div className="sidebar-section">
               <h6>Date Selection</h6>
@@ -1091,7 +1083,6 @@ const DashboardPage = () => {
             </div>
           </aside>
 
-          {/* Main map area */}
           <main className="dashboard-map-area">
             {aeronetError && (
               <div className="aeronet-error-bar" role="alert">
@@ -1396,7 +1387,6 @@ const DashboardPage = () => {
             )}
           </main>
 
-          {/* Right sidebar - Selected Data (show reopen only when something is selected) */}
           {!rightPanelOpen && showRightPanel && (
             <button
               type="button"

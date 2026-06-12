@@ -42,31 +42,17 @@ async function fetchAeronetSeries(
   try {
     const raw = await getAERONETData(querySite, start, end, aodVersion);
     const daily = computeDailyMeanAOD(raw);
-    const key =
-      variable === 'aeronet_aod_675' ? 'AOD_675nm' : 'AOD_500nm';
+    const key = variable === 'aeronet_aod_675' ? 'AOD_675nm' : 'AOD_500nm';
     const points = daily
       .map((row) => {
         const v = row[key];
-        if (v == null || !Number.isFinite(v)) return null;
-        return { time: row.date.slice(0, 10), value: v };
+        return v != null && Number.isFinite(v) ? { time: row.date.slice(0, 10), value: v } : null;
       })
       .filter((p): p is { time: string; value: number } => p != null);
-    return {
-      id,
-      source: 'aeronet',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points,
-    };
+    return { id, source: 'aeronet', variable, label: def.label, unit: def.unit, points };
   } catch (err) {
     return {
-      id,
-      source: 'aeronet',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points: [],
+      id, source: 'aeronet', variable, label: def.label, unit: def.unit, points: [],
       error: err instanceof Error ? err.message : 'AERONET fetch failed',
     };
   }
@@ -91,31 +77,17 @@ async function fetchMerra2Series(
         })
         .filter((p): p is { time: string; value: number } => p != null);
     }
-    return {
-      id,
-      source: 'merra2',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points,
-    };
+    return { id, source: 'merra2', variable, label: def.label, unit: def.unit, points };
   } catch (err) {
     return {
-      id,
-      source: 'merra2',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points: [],
+      id, source: 'merra2', variable, label: def.label, unit: def.unit, points: [],
       error: err instanceof Error ? err.message : 'MERRA2 fetch failed',
     };
   }
 }
 
-/**
- * Fetch AAQE daily PM2.5 forecast values for the nearest AAQE point to the anchor.
- * AAQE is a 3-day forecast; we walk through init dates to cover the requested range.
- */
+// Walks AAQE init dates in 3-day steps to cover the full requested range.
+// Each model run covers 3 forecast days; max 10 iterations to avoid runaway loops.
 async function fetchAaqeSeries(
   variable: AnalysisVariableId,
   lat: number,
@@ -125,16 +97,14 @@ async function fetchAaqeSeries(
 ): Promise<NormalizedSeries> {
   const def = getVariableDef(variable)!;
   const id = 'aaqe-pm25';
-  const FIRE_RADIUS_KM = 250; // max distance to nearest AAQE forecast point
+  const MAX_DISTANCE_KM = 250;
 
   try {
-    const startD = new Date(start);
-    const endD = new Date(end);
+    const startD = new Date(start), endD = new Date(end);
     const pointsMap = new Map<string, number>();
-
-    // Walk from start to end in 3-day steps (each AAQE init covers 3 days).
     let cursor = new Date(startD);
     let attempts = 0;
+
     while (cursor <= endD && attempts < 10) {
       attempts++;
       const isoReq = cursor.toISOString().slice(0, 10);
@@ -144,26 +114,20 @@ async function fetchAaqeSeries(
       const forecastPoints = await getAAQEForecastByDate(nearest.initDate);
       if (!forecastPoints.length) { cursor.setDate(cursor.getDate() + 3); continue; }
 
-      // Find nearest forecast station to anchor.
-      let bestDist = Infinity;
-      let bestIdx = -1;
+      let bestDist = Infinity, bestIdx = -1;
       for (let i = 0; i < forecastPoints.length; i++) {
         const d = haversineKm(lat, lon, forecastPoints[i].latitude, forecastPoints[i].longitude);
         if (d < bestDist) { bestDist = d; bestIdx = i; }
       }
-      if (bestIdx === -1 || bestDist > FIRE_RADIUS_KM) { cursor.setDate(cursor.getDate() + 3); continue; }
+      if (bestIdx === -1 || bestDist > MAX_DISTANCE_KM) { cursor.setDate(cursor.getDate() + 3); continue; }
 
       const props = forecastPoints[bestIdx].properties;
-      const days = getAaqeForecastDaysFromInit(nearest.initDate);
-
-      for (const day of days) {
-        if (day.iso < start || day.iso > end) continue;
-        if (pointsMap.has(day.iso)) continue;
+      for (const day of getAaqeForecastDaysFromInit(nearest.initDate)) {
+        if (day.iso < start || day.iso > end || pointsMap.has(day.iso)) continue;
         const { pm } = getAaqeDisplayValues(props, 'DAILY_AQI', '130');
         if (pm != null && Number.isFinite(pm)) pointsMap.set(day.iso, pm);
       }
 
-      // Advance cursor past the 3 forecast days.
       cursor = new Date(nearest.initDate);
       cursor.setDate(cursor.getDate() + 3);
     }
@@ -171,25 +135,16 @@ async function fetchAaqeSeries(
     const points = [...pointsMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([time, value]) => ({ time, value }));
-
     return { id, source: 'aaqe', variable, label: def.label, unit: def.unit, points };
   } catch (err) {
     return {
-      id,
-      source: 'aaqe',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points: [],
+      id, source: 'aaqe', variable, label: def.label, unit: def.unit, points: [],
       error: err instanceof Error ? err.message : 'AAQE fetch failed',
     };
   }
 }
 
-/**
- * Count VIIRS fire detections within 100 km of the anchor per day.
- * Uses the cached FIRMS 7-day feed — only recent data (last 7 days) available.
- */
+// Counts VIIRS fire detections within 100 km of the anchor per day (last 7 days only).
 async function fetchFireCountSeries(
   variable: AnalysisVariableId,
   lat: number,
@@ -203,31 +158,19 @@ async function fetchFireCountSeries(
 
   try {
     const allFires = await getNOAA21VIIRS7DayFromWFS();
-    const nearby = allFires.filter(
-      (f) =>
-        f.acq_date >= start &&
-        f.acq_date <= end &&
-        haversineKm(lat, lon, f.latitude, f.longitude) <= RADIUS_KM
-    );
-
     const byDate = new Map<string, number>();
-    for (const f of nearby) {
+    for (const f of allFires) {
+      if (f.acq_date < start || f.acq_date > end) continue;
+      if (haversineKm(lat, lon, f.latitude, f.longitude) > RADIUS_KM) continue;
       byDate.set(f.acq_date, (byDate.get(f.acq_date) ?? 0) + 1);
     }
-
     const points = [...byDate.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([time, value]) => ({ time, value }));
-
     return { id, source: 'firms', variable, label: def.label, unit: def.unit, points };
   } catch (err) {
     return {
-      id,
-      source: 'firms',
-      variable,
-      label: def.label,
-      unit: def.unit,
-      points: [],
+      id, source: 'firms', variable, label: def.label, unit: def.unit, points: [],
       error: err instanceof Error ? err.message : 'Fire data fetch failed',
     };
   }
@@ -248,13 +191,9 @@ export async function fetchAnalysisSeries(
       const site = location.aeronetQuerySite;
       if (!site) {
         results.push({
-          id: `skip-${vid}`,
-          source: 'aeronet',
-          variable: vid,
-          label: def.label,
-          unit: def.unit,
-          points: [],
-          // Only show an error if user expected AERONET — not for every anchor type.
+          id: `skip-${vid}`, source: 'aeronet', variable: vid,
+          label: def.label, unit: def.unit, points: [],
+          // Only surface an error when the user clicked an AERONET marker.
           error: location.anchorSource === 'aeronet'
             ? 'AERONET site ID missing — try re-clicking the site'
             : undefined,
@@ -265,15 +204,8 @@ export async function fetchAnalysisSeries(
     } else if (def.source === 'merra2') {
       const sitename = location.merra2Sitename;
       if (!sitename) {
-        results.push({
-          id: `skip-${vid}`,
-          source: 'merra2',
-          variable: vid,
-          label: def.label,
-          unit: def.unit,
-          points: [],
-          error: undefined, // no station found — shown in metadata, not as an error
-        });
+        // Station not yet resolved — shown in sidebar metadata, not as an error here.
+        results.push({ id: `skip-${vid}`, source: 'merra2', variable: vid, label: def.label, unit: def.unit, points: [] });
         continue;
       }
       results.push(await fetchMerra2Series(vid, sitename, start, end));

@@ -1,14 +1,11 @@
-/**
- * MERRA2 PM2.5 Grid API – fetches real data from GES DISC OPeNDAP
- * Requires EARTHDATA_USERNAME and EARTHDATA_PASSWORD in env (or .env)
- * Falls back to sample data if fetch fails.
- */
+// Fetches MERRA2 CNN PM2.5 grid from NASA GES DISC OPeNDAP.
+// Falls back to a synthetic sample grid when credentials are missing or the API is unreachable.
+// Set EARTHDATA_USERNAME + EARTHDATA_PASSWORD (or EARTHDATA_TOKEN) in .env for real data.
 
 const GLOBAL = { south: -90, west: -180, north: 90, east: 180 };
-const GLOBAL_WIDTH = 576; // 0.625 deg
-const GLOBAL_HEIGHT = 361; // 0.5 deg
+const GLOBAL_WIDTH = 576;  // 0.625° lon resolution
+const GLOBAL_HEIGHT = 361; // 0.5° lat resolution
 
-/** Generate sample grid (fallback when GES DISC unavailable) */
 function sampleGrid(date, fallbackReason = 'fallback_unknown') {
   const { south, west, north, east } = GLOBAL;
   const values = [];
@@ -22,8 +19,7 @@ function sampleGrid(date, fallbackReason = 'fallback_unknown') {
       const plume2 = Math.exp(-Math.pow((lon - 20) / 20, 2)) * Math.exp(-Math.pow((lat - 0) / 15, 2));
       const base = 5 + 8 * tropics;
       let v = base + 65 * plume1 + 35 * plume2 + 3 * Math.sin((lat + lon) * 0.05);
-      v = Math.max(2, Math.min(110, v));
-      v = Math.round(v * 10) / 10;
+      v = Math.round(Math.max(2, Math.min(110, v)) * 10) / 10;
       values.push(v);
       if (v < min) min = v;
       if (v > max) max = v;
@@ -44,25 +40,20 @@ function sampleGrid(date, fallbackReason = 'fallback_unknown') {
   };
 }
 
-/** Parse OPeNDAP ASCII response into flat values array */
 function parseOpendapAscii(text, width, height) {
   const values = [];
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  for (const line of lines) {
-    const nums = line.trim().split(/[\s,]+/).map(Number).filter((n) => !isNaN(n));
-    for (const n of nums) values.push(n);
+  for (const line of text.split(/\r?\n/).filter(Boolean)) {
+    for (const n of line.trim().split(/[\s,]+/).map(Number).filter((n) => !isNaN(n))) {
+      values.push(n);
+    }
   }
-  if (values.length >= width * height) return values.slice(0, width * height);
-  return null;
+  return values.length >= width * height ? values.slice(0, width * height) : null;
 }
 
-/** Build OPeNDAP subset indices for global MERRA-2 0.5°x0.625° grid */
 function getGlobalIndices() {
-  // MERRA-2: lat 361 pts (-90 to 90), lon 576 pts (-180 to 179.375)
   return { latMin: 0, latMax: 360, lonMin: 0, lonMax: 575 };
 }
 
-/** Fetch real MERRA2 PM2.5 grid from GES DISC */
 export async function fetchMerra2Grid(date) {
   const username = process.env.EARTHDATA_USERNAME;
   const password = process.env.EARTHDATA_PASSWORD;
@@ -75,7 +66,6 @@ export async function fetchMerra2Grid(date) {
   const granuleFile = `MERRA2_HAQAST_CNN_L4_V1.${y}${m}${d}.nc4`;
   const baseUrl = `https://acdisc.gesdisc.eosdis.nasa.gov/opendap/HAQAST/MERRA2_CNN_HAQAST_PM25.1/${y}/${granuleFile}`;
 
-  // CMR check – verify granule exists
   const cmrUrl = `https://cmr.earthdata.nasa.gov/search/granules.umm_json?provider=GES_DISC&short_name=MERRA2_CNN_HAQAST_PM25&temporal=${date}T00:00:00Z,${date}T23:59:59Z&page_size=1`;
   let cmrRes;
   try {
@@ -87,7 +77,7 @@ export async function fetchMerra2Grid(date) {
   if (!cmrRes.ok) return sampleGrid(date, `cmr_http_${cmrRes.status}`);
 
   const cmrJson = await cmrRes.json();
-  const items = cmrJson?.items || [];
+  const items = cmrJson?.items ?? [];
   if (items.length === 0) {
     console.warn('[MERRA2] No granule for date:', date);
     return sampleGrid(date, 'no_granule_for_date');
@@ -95,9 +85,9 @@ export async function fetchMerra2Grid(date) {
 
   const opendapUrl = items[0]?.umm?.RelatedUrls?.find((u) => u.Subtype === 'OPENDAP DATA')?.URL;
   const dataUrl = opendapUrl || baseUrl;
-
   const { latMin, latMax, lonMin, lonMax } = getGlobalIndices();
-  // One timestep (noon = index 12), global subset
+
+  // Noon timestep (index 12), full global extent
   const subset = `MERRA2_CNN_Surface_PM25[12:12][${latMin}:${latMax}][${lonMin}:${lonMax}]`;
   const asciiUrl = `${dataUrl}.ascii?${subset}`;
 
@@ -110,10 +100,7 @@ export async function fetchMerra2Grid(date) {
 
   let res;
   try {
-    res = await fetch(asciiUrl, {
-      headers,
-      redirect: 'follow',
-    });
+    res = await fetch(asciiUrl, { headers, redirect: 'follow' });
   } catch (e) {
     console.warn('[MERRA2] OPeNDAP fetch failed:', e.message);
     return sampleGrid(date, 'opendap_network_error');
@@ -122,7 +109,7 @@ export async function fetchMerra2Grid(date) {
   if (!res.ok) {
     console.warn('[MERRA2] OPeNDAP returned', res.status, res.statusText);
     if (res.status === 401 && !useAuth && !token) {
-      console.warn('[MERRA2] Set EARTHDATA_USERNAME/EARTHDATA_PASSWORD or EARTHDATA_TOKEN for real data.');
+      console.warn('[MERRA2] Set EARTHDATA_USERNAME/PASSWORD or EARTHDATA_TOKEN for real data.');
     }
     return sampleGrid(date, res.status === 401 ? 'opendap_401_unauthorized' : `opendap_http_${res.status}`);
   }
@@ -132,16 +119,14 @@ export async function fetchMerra2Grid(date) {
   const nLon = lonMax - lonMin + 1;
   const values = parseOpendapAscii(text, nLon, nLat);
   if (!values || values.length === 0) {
-    console.warn('[MERRA2] Could not parse OPeNDAP ASCII');
+    console.warn('[MERRA2] Could not parse OPeNDAP ASCII response');
     return sampleGrid(date, 'opendap_parse_error');
   }
 
-  // Keep full global resolution
+  const noData = -9999;
   const outValues = [];
   let min = Infinity, max = -Infinity;
-  const noData = -9999;
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
+  for (const v of values) {
     const num = typeof v === 'number' && !isNaN(v) && v !== noData ? Math.round(v * 10) / 10 : noData;
     outValues.push(num);
     if (num !== noData) {
