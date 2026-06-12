@@ -12,26 +12,35 @@ import {
 const app = express();
 const PORT = process.env.MERRA2_API_PORT || 3001;
 
-// Proxy AERONET and AAQE GeoJSON requests — Vite dev proxy only works locally;
-// production traffic is routed here via Nginx.
-app.use('/api/aeronet', async (req, res) => {
+// Generic proxy helper — strips the local prefix and forwards to an upstream host.
+async function proxyTo(upstream, stripPrefix, req, res, tag) {
   try {
-    const pathAndQuery = req.originalUrl.replace(/^\/api\/aeronet/, '') || '/';
-    const target = `https://aeronet.gsfc.nasa.gov${pathAndQuery.startsWith('/') ? '' : '/'}${pathAndQuery}`;
-    const upstream = await fetch(target, {
+    const pathAndQuery = req.originalUrl.replace(new RegExp(`^${stripPrefix}`), '') || '/';
+    const target = `${upstream}${pathAndQuery.startsWith('/') ? '' : '/'}${pathAndQuery}`;
+    const up = await fetch(target, {
       method: req.method,
       headers: { 'User-Agent': 'african-dashboard/1.0' },
     });
-    const ct = upstream.headers.get('content-type');
+    const ct = up.headers.get('content-type');
     if (ct) res.setHeader('Content-Type', ct);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.status(upstream.status);
-    res.send(Buffer.from(await upstream.arrayBuffer()));
+    res.status(up.status);
+    res.send(Buffer.from(await up.arrayBuffer()));
   } catch (err) {
-    console.error('[AERONET proxy] Error:', err);
-    res.status(502).json({ error: err?.message || 'AERONET proxy failed' });
+    console.error(`[${tag} proxy] Error:`, err);
+    res.status(502).json({ error: err?.message || `${tag} proxy failed` });
   }
-});
+}
+
+// AERONET + AAQE GeoJSON — same NASA host, one proxy covers both.
+app.use('/api/aeronet', (req, res) =>
+  proxyTo('https://aeronet.gsfc.nasa.gov', '/api/aeronet', req, res, 'AERONET')
+);
+
+// FIRMS — fire hotspot WFS and CSV area API.
+app.use('/api/firms', (req, res) =>
+  proxyTo('https://firms.modaps.eosdis.nasa.gov', '/api/firms', req, res, 'FIRMS')
+);
 
 app.get('/api/merra2/pm25/grid', async (req, res) => {
   try {
