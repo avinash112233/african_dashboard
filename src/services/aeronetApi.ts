@@ -39,20 +39,43 @@ export interface SiteAODMap {
     | { hasData: false };
 }
 
-/** In-memory caches for faster repeat loads */
+/** In-memory + localStorage caches for faster loads across sessions */
 type CacheEntry<T> = { data: T; ts: number };
-const CACHE_TTL_MS = 10 * 60 * 1000;
-const CACHE_SITES_TTL_MS = 60 * 60 * 1000;
-const cacheSites = { entry: null as CacheEntry<AERONETSite[]> | null };
-const cacheAfrica = new Map<string, CacheEntry<SiteAODMap>>();
+const CACHE_TTL_MS        = 30 * 60 * 1000;       // AOD data: 30 min
+const CACHE_SITES_TTL_MS  = 24 * 60 * 60 * 1000;  // Site list: 24 hours
+const CACHE_AFRICA_TTL_MS = 30 * 60 * 1000;        // Africa AOD colors: 30 min
+
+const LS_SITES_KEY   = 'aqf_aeronet_sites_v1';
+const LS_AFRICA_KEY  = 'aqf_aeronet_africa_v1';
+
+const cacheSites    = { entry: null as CacheEntry<AERONETSite[]> | null };
+const cacheAfrica   = new Map<string, CacheEntry<SiteAODMap>>();
 const cacheSiteData = new Map<string, CacheEntry<AERONETDataPoint[]>>();
 const MAX_AFRICA_CACHE = 20;
-const MAX_SITE_CACHE = 50;
+const MAX_SITE_CACHE   = 50;
 
 function pruneCache<T>(m: Map<string, CacheEntry<T>>, max: number) {
   if (m.size <= max) return;
   const entries = [...m.entries()].sort((a, b) => a[1].ts - b[1].ts);
   for (let i = 0; i < entries.length - max; i++) m.delete(entries[i][0]);
+}
+
+/** Read a JSON entry from localStorage, returning null if missing/expired/corrupt. */
+function lsRead<T>(key: string, ttlMs: number): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const entry: CacheEntry<T> = JSON.parse(raw);
+    if (Date.now() - entry.ts > ttlMs) { localStorage.removeItem(key); return null; }
+    return entry.data;
+  } catch { return null; }
+}
+
+/** Write a value to localStorage, silently ignoring quota errors. */
+function lsWrite<T>(key: string, data: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* quota exceeded — ignore */ }
 }
 
 /**
@@ -111,27 +134,53 @@ function parseLocationsText(text: string): AERONETSite[] {
   return sites;
 }
 
+/** Fetch fresh site list from NASA and update both caches. */
+async function fetchAndCacheSites(): Promise<AERONETSite[]> {
+  const url = `${API_BASE}/aeronet_locations_extended_v3.txt`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`AERONET API ${res.status}`);
+  const text = await res.text();
+  const all = parseLocationsText(text);
+  const sites = all.filter((s) => s.latitude >= -37 && s.latitude <= 37 && s.longitude >= -18 && s.longitude <= 52);
+  cacheSites.entry = { data: sites, ts: Date.now() };
+  lsWrite(LS_SITES_KEY, sites);
+  return sites;
+}
+
 /**
- * Fetch African AERONET sites using the official site list text file.
- * Uses aeronet_locations_extended_v3.txt (not the deprecated print_site_table_v3).
- * Cached 1 hr in memory for faster loads.
+ * Fetch African AERONET sites.
+ * Strategy: stale-while-revalidate.
+ *   - Return cached data (memory or localStorage) immediately so the map renders instantly.
+ *   - If cache is stale (> 24h), trigger a background refresh for the next call.
  */
 export async function getAfricanAERONETSites(): Promise<AERONETSite[]> {
   const now = Date.now();
+
+  // 1. In-memory cache — still fresh.
   if (cacheSites.entry && now - cacheSites.entry.ts < CACHE_SITES_TTL_MS) {
     return cacheSites.entry.data;
   }
+
+  // 2. localStorage cache — return immediately, revalidate in background if stale.
+  const lsCached = lsRead<AERONETSite[]>(LS_SITES_KEY, CACHE_SITES_TTL_MS * 3); // allow up to 3× TTL as stale
+  if (lsCached) {
+    cacheSites.entry = { data: lsCached, ts: now };
+    // If older than TTL, silently refresh in background so next load is fresh.
+    const lsEntry = (() => { try { return JSON.parse(localStorage.getItem(LS_SITES_KEY) ?? '{}'); } catch { return {}; } })();
+    if (now - (lsEntry.ts ?? 0) > CACHE_SITES_TTL_MS) {
+      fetchAndCacheSites().catch(() => {});
+    }
+    return lsCached;
+  }
+
+  // 3. No fresh cache — try fetching from NASA.
   try {
-    const url = `${API_BASE}/aeronet_locations_extended_v3.txt`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`AERONET API ${res.status}`);
-    const text = await res.text();
-    const all = parseLocationsText(text);
-    const sites = all.filter((s) => s.latitude >= -37 && s.latitude <= 37 && s.longitude >= -18 && s.longitude <= 52);
-    cacheSites.entry = { data: sites, ts: now };
-    return sites;
+    return await fetchAndCacheSites();
   } catch (err) {
-    console.error('[AERONET] Error:', err);
+    console.error('[AERONET] NASA unreachable:', err);
+    // Emergency fallback: return ANY stale localStorage data rather than empty map.
+    const stale = lsRead<AERONETSite[]>(LS_SITES_KEY, Infinity);
+    if (stale) { cacheSites.entry = { data: stale, ts: now }; return stale; }
     return cacheSites.entry?.data ?? [];
   }
 }
@@ -239,7 +288,7 @@ const AFRICA_BBOX = { south: -37, west: -18, north: 37, east: 52 };
 /**
  * Fetch AOD data for all African sites in date range. Used to color-code map markers.
  * Returns map of site ID -> latest AOD 500nm (or hasData: false).
- * Cached 10 min in memory.
+ * Cached 30 min in memory + 30 min in localStorage (survives page refresh).
  */
 export async function getAERONETDataAfrica(
   startDate: string,
@@ -247,8 +296,19 @@ export async function getAERONETDataAfrica(
   aodVersion: AERONETAODVersion = 1.5
 ): Promise<SiteAODMap> {
   const key = `${startDate}|${endDate}|${aodVersion}`;
+  const now = Date.now();
+
+  // 1. In-memory cache.
   const cached = cacheAfrica.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
+  if (cached && now - cached.ts < CACHE_AFRICA_TTL_MS) return cached.data;
+
+  // 2. localStorage cache.
+  const lsKey = `${LS_AFRICA_KEY}_${key}`;
+  const lsCached = lsRead<SiteAODMap>(lsKey, CACHE_AFRICA_TTL_MS);
+  if (lsCached) {
+    cacheAfrica.set(key, { data: lsCached, ts: now });
+    return lsCached;
+  }
 
   const map: SiteAODMap = {};
   try {
@@ -321,10 +381,13 @@ export async function getAERONETDataAfrica(
       };
     }
     pruneCache(cacheAfrica, MAX_AFRICA_CACHE);
-    cacheAfrica.set(key, { data: map, ts: Date.now() });
+    cacheAfrica.set(key, { data: map, ts: now });
+    lsWrite(lsKey, map);
     return map;
   } catch (err) {
     console.error('[AERONET] getAERONETDataAfrica error:', err);
-    return map;
+    // Emergency fallback: return any stale cached colors rather than empty map.
+    const stale = lsRead<SiteAODMap>(lsKey, Infinity);
+    return stale ?? map;
   }
 }

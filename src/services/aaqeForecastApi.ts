@@ -65,7 +65,11 @@ function toYmdCompact(date: string): string {
   return date.replaceAll('-', '');
 }
 
-const PROBE_TIMEOUT_MS = 15000;
+const PROBE_TIMEOUT_MS = 8000;
+
+/** Module-level caches so repeated calls for the same dates are instant. */
+const initDateCache = new Map<string, string | null>(); // requested → resolved initDate
+const geojsonCache  = new Map<string, AAQEForecastPoint[]>(); // initDate → parsed points
 
 function toNumber(value: string | number | undefined): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -131,48 +135,76 @@ export function getAaqeDisplayValues(
 }
 
 /**
- * Check that a forecast file exists (GET only — HEAD is unreliable through some dev proxies).
+ * Lightweight probe — checks HTTP status only, discards body immediately.
+ * Returns the date ISO if the file exists (200 OK), otherwise null.
  */
-export async function probeAAQEForecastExists(dateIso: string): Promise<boolean> {
+async function probeDate(dateIso: string): Promise<string | null> {
   const base = getAaqeForecastBaseUrl();
-  const filename = `${toYmdCompact(dateIso)}_forecast.geojson`;
-  const url = `${base}${filename}`;
+  const url = `${base}${toYmdCompact(dateIso)}_forecast.geojson`;
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { method: 'GET', signal: ctrl.signal });
-    if (!res.ok) return false;
-    const data = (await res.json()) as AAQEGeoJSON;
-    return Array.isArray(data.features) && data.features.length > 0;
+    const res = await fetch(url, { signal: ctrl.signal });
+    // Cancel body download immediately — we only need the status code.
+    res.body?.cancel().catch(() => {});
+    return res.ok ? dateIso : null;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(tid);
   }
 }
 
 /**
- * Walk backward from `startIso` (inclusive) like `aeronet_aq` `nearestDate` in SiteManager / SidePanel.
+ * Find the nearest available AAQE forecast init date.
+ *
+ * Strategy (fast):
+ *   1. Check module-level cache (instant if same date requested before).
+ *   2. Probe today + yesterday IN PARALLEL (covers >99% of cases, ~1 round-trip).
+ *   3. Fall back to sequential probe up to `maxDaysBack` days.
  */
 export async function findNearestAAQEForecastInitDate(
   startIso: string,
-  maxDaysBack = 30
+  maxDaysBack = 7
 ): Promise<{ initDate: string; wasAdjusted: boolean } | null> {
   let d = dayjs(startIso, 'YYYY-MM-DD', true);
   if (!d.isValid()) d = dayjs(startIso);
   if (!d.isValid()) return null;
   const requested = d.format('YYYY-MM-DD');
-  for (let i = 0; i <= maxDaysBack; i++) {
+
+  if (initDateCache.has(requested)) {
+    const cached = initDateCache.get(requested)!;
+    return cached ? { initDate: cached, wasAdjusted: cached !== requested } : null;
+  }
+
+  // Phase 1: probe today and yesterday in parallel.
+  const candidates = [d.format('YYYY-MM-DD'), d.subtract(1, 'day').format('YYYY-MM-DD')];
+  const [r0, r1] = await Promise.all(candidates.map(probeDate));
+  const fast = r0 ?? r1 ?? null;
+  if (fast) {
+    initDateCache.set(requested, fast);
+    return { initDate: fast, wasAdjusted: fast !== requested };
+  }
+
+  // Phase 2: sequential fallback for older dates.
+  d = d.subtract(2, 'day');
+  for (let i = 2; i <= maxDaysBack; i++) {
     const iso = d.format('YYYY-MM-DD');
-    if (await probeAAQEForecastExists(iso)) {
-      return { initDate: iso, wasAdjusted: iso !== requested };
+    const found = await probeDate(iso);
+    if (found) {
+      initDateCache.set(requested, found);
+      return { initDate: found, wasAdjusted: true };
     }
     d = d.subtract(1, 'day');
   }
+
+  initDateCache.set(requested, null);
   return null;
 }
 
 export async function getAAQEForecastByDate(dateIso: string): Promise<AAQEForecastPoint[]> {
+  if (geojsonCache.has(dateIso)) return geojsonCache.get(dateIso)!;
+
   const base = getAaqeForecastBaseUrl();
   const filename = `${toYmdCompact(dateIso)}_forecast.geojson`;
   const res = await fetch(`${base}${filename}`);
@@ -193,5 +225,7 @@ export async function getAAQEForecastByDate(dateIso: string): Promise<AAQEForeca
       properties: f.properties ?? {},
     });
   }
+
+  geojsonCache.set(dateIso, points);
   return points;
 }

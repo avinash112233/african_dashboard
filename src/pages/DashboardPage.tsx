@@ -46,41 +46,14 @@ import {
   type AaqeDisplayType,
 } from '../services/aaqeForecastApi';
 import { calculateAQIFromPm25, getAqiCategory } from '../utils/aqiUtils';
+import {
+  anchorFromAaqe,
+  anchorFromAeronet,
+  anchorFromFire,
+  anchorFromMerra2,
+} from '../analysis/locationAnchor';
 import type { AnalysisLocationContext } from '../analysis/types';
 import './DashboardPage.css';
-
-function buildAnalysisLocation(
-  site: AERONETSite | null,
-  merra2: MERRA2StationDailyRecord | null,
-  aaqe: SelectedAAQEData | null
-): AnalysisLocationContext | null {
-  if (site) {
-    const querySite =
-      site.name && site.name !== site.site ? site.name : site.site;
-    return {
-      label: site.name ?? site.site,
-      latitude: site.latitude,
-      longitude: site.longitude,
-      aeronetQuerySite: querySite,
-    };
-  }
-  if (merra2) {
-    return {
-      label: merra2.sitename,
-      latitude: merra2.latitude,
-      longitude: merra2.longitude,
-      merra2Sitename: merra2.sitename,
-    };
-  }
-  if (aaqe) {
-    return {
-      label: aaqe.siteName ?? aaqe.station ?? 'AAQE site',
-      latitude: aaqe.latitude,
-      longitude: aaqe.longitude,
-    };
-  }
-  return null;
-}
 
 interface SelectedFireData {
   latitude: number;
@@ -176,6 +149,8 @@ const DashboardPage = () => {
   const [aeronetError, setAeronetError] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
+  /** Persists across map layer switches; drives cross-layer Analysis panel. */
+  const [analysisAnchor, setAnalysisAnchor] = useState<AnalysisLocationContext | null>(null);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [siteAodMap, setSiteAodMap] = useState<SiteAODMap>({});
@@ -189,9 +164,11 @@ const DashboardPage = () => {
   const [fireAnalysisRange, setFireAnalysisRange] = useState<FireAnalysisRange>('7D');
 
   const getDateRange = (selectedDateStr: string, range: AnalysisRange): { startDate: string; endDate: string } => {
-    const end = dayjs(selectedDateStr, 'YYYY-MM-DD').startOf('day');
+    // Cap end at today — never request data beyond what's available.
+    const today = dayjs().startOf('day');
+    const requested = dayjs(selectedDateStr, 'YYYY-MM-DD').startOf('day');
+    const end = requested.isAfter(today) ? today : requested;
     const days = range === '7D' ? 7 : range === '30D' ? 30 : 90;
-    // Inclusive range (last N days ending on selectedDate)
     const start = end.subtract(days - 1, 'day');
     return { startDate: start.format('YYYY-MM-DD'), endDate: end.format('YYYY-MM-DD') };
   };
@@ -298,37 +275,34 @@ const DashboardPage = () => {
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
 
-  // Prefetch fire hotspots on load and when the selected date changes (not only when layer is active).
+  // Fire hotspots: prefetch immediately on open (FIRMS is cached 15 min).
   useEffect(() => {
     let cancelled = false;
     setFireLoading(true);
     getNOAA21VIIRS7DayFromWFS()
-      .then((pts) => {
-        if (!cancelled) setFirePoints(pts);
-      })
-      .finally(() => {
-        if (!cancelled) setFireLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((pts) => { if (!cancelled) setFirePoints(pts); })
+      .finally(() => { if (!cancelled) setFireLoading(false); });
+    return () => { cancelled = true; };
   }, [selectedDate]);
 
   useEffect(() => {
     setAaqeTimeCode(getDefaultAaqeTimeCodeFromUtc());
   }, []);
 
-  // Prefetch AAQE forecast on load and when the selected date changes.
+  // AAQE forecast: delayed prefetch so AERONET (same NASA API) gets priority.
   useEffect(() => {
     const requested = selectedDate.isAfter(dayjs(), 'day')
       ? dayjs().format('YYYY-MM-DD')
       : selectedDate.format('YYYY-MM-DD');
-    setAaqeLoading(true);
-    setAaqeError(null);
-    setAaqeNotice(null);
 
     let cancelled = false;
-    (async () => {
+    // Short delay so AERONET site list gets a head-start (AAQE is now cached after first load).
+    const startTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setAaqeLoading(true);
+      setAaqeError(null);
+      setAaqeNotice(null);
+      (async () => {
       const nearest = await findNearestAAQEForecastInitDate(requested);
       if (cancelled) return;
       if (!nearest) {
@@ -398,9 +372,11 @@ const DashboardPage = () => {
         if (!cancelled) setAaqeLoading(false);
       }
     })();
+    }, 1000); // 1 s delay — lets AERONET get a head-start; GeoJSON is cached after first load
 
     return () => {
       cancelled = true;
+      window.clearTimeout(startTimer);
     };
   }, [selectedDate]);
 
@@ -426,7 +402,7 @@ const DashboardPage = () => {
     }
   }, [analysisStartDate, analysisEndDate, selectedSite?.site, selectedSite?.name, aeronetAodVersion]);
 
-  // Prefetch AERONET map colors for the selected date range (latest day).
+  // AERONET AOD map colors: prefetch for active date (slight debounce).
   useEffect(() => {
     const day = aeronetEnd.format('YYYY-MM-DD');
     let cancelled = false;
@@ -446,12 +422,14 @@ const DashboardPage = () => {
     setSelectedSite(null);
     setSelectedFire(null);
     setSelectedAAQE(null);
+    setAnalysisAnchor(anchorFromMerra2(station));
     setChartData([]);
     setRightPanelOpen(true);
   }, []);
 
-  // Prefetch AERONET site list once when the dashboard opens.
+  // AERONET site list: load on open, cached after first load.
   useEffect(() => {
+    if (aeronetSites.length > 0) return; // already loaded
     let cancelled = false;
     setAeronetLoading(true);
     setAeronetError(null);
@@ -473,9 +451,9 @@ const DashboardPage = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [aeronetSites.length]);
 
-  // Prefetch MERRA2 stations on load and when the selected date changes.
+  // MERRA2 stations: prefetch on open and when date changes.
   useEffect(() => {
     let cancelled = false;
     const loadStations = async () => {
@@ -651,8 +629,13 @@ const DashboardPage = () => {
     setSelectedFire(null);
     setSelectedMerra2Station(null);
     setSelectedAAQE(null);
+    setAnalysisAnchor(anchorFromAeronet(site));
     setChartData([]);
     setRightPanelOpen(true);
+  }, []);
+
+  const clearAnalysisAnchor = useCallback(() => {
+    setAnalysisAnchor(null);
   }, []);
 
   const exportAODCSV = () => {
@@ -677,6 +660,7 @@ const DashboardPage = () => {
     setSelectedAAQE(null);
     setChartData([]);
     setRightPanelOpen(true);
+    setAnalysisAnchor(anchorFromFire(fire.latitude, fire.longitude));
     setSelectedFire({
       latitude: fire.latitude,
       longitude: fire.longitude,
@@ -710,11 +694,21 @@ const DashboardPage = () => {
       aaqeDisplayType,
       aaqeTimeCode
     );
+    const siteName = typeof props.Site_Name === 'string' ? props.Site_Name : undefined;
+    const station = typeof props.Station === 'string' ? props.Station : undefined;
+    setAnalysisAnchor(
+      anchorFromAaqe({
+        latitude: point.latitude,
+        longitude: point.longitude,
+        siteName,
+        station,
+      })
+    );
     setSelectedAAQE({
       latitude: point.latitude,
       longitude: point.longitude,
-      station: typeof props.Station === 'string' ? props.Station : undefined,
-      siteName: typeof props.Site_Name === 'string' ? props.Site_Name : undefined,
+      station,
+      siteName,
       utcDate: typeof props.UTC_DATE === 'string' ? props.UTC_DATE : undefined,
       dailyAqi: displayAqi ?? undefined,
       selectedPm: displayPm ?? undefined,
@@ -748,12 +742,6 @@ const DashboardPage = () => {
         setCircleCenter(null);
         setFireChartRectDrawActive(false);
         setFireChartBounds(null);
-      }
-      if (prev === 'merra2') {
-        setSelectedMerra2Station(null);
-      }
-      if (prev === 'aaqe') {
-        setSelectedAAQE(null);
       }
       return next;
     });
@@ -843,10 +831,7 @@ const DashboardPage = () => {
   const hasMapSelection = Boolean(
     selectedSite || selectedFire || selectedMerra2Station || selectedAAQE
   );
-  const analysisLocation = useMemo(
-    () => buildAnalysisLocation(selectedSite, selectedMerra2Station, selectedAAQE),
-    [selectedSite, selectedMerra2Station, selectedAAQE]
-  );
+  const showRightPanel = hasMapSelection || analysisAnchor != null;
 
   return (
     <div className="dashboard-page">
@@ -864,11 +849,6 @@ const DashboardPage = () => {
             </div>
             <div className="sidebar-section">
               <h6>Data Layers</h6>
-              {(aeronetLoading || fireLoading || merra2Loading || aaqeLoading) && (
-                <small className="layer-tip" style={{ display: 'block', marginBottom: 8 }}>
-                  Loading layer data in the background for {formatDisplayDate(effectiveSelectedDateStr)}…
-                </small>
-              )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -1417,7 +1397,7 @@ const DashboardPage = () => {
           </main>
 
           {/* Right sidebar - Selected Data (show reopen only when something is selected) */}
-          {!rightPanelOpen && hasMapSelection && (
+          {!rightPanelOpen && showRightPanel && (
             <button
               type="button"
               className="panel-reopen-btn"
@@ -1427,7 +1407,7 @@ const DashboardPage = () => {
               ◀
             </button>
           )}
-          {rightPanelOpen && hasMapSelection && (
+          {rightPanelOpen && showRightPanel && (
             <aside className="dashboard-sidebar-right">
               <div className="selected-data-panel">
                 <div className="selected-data-header-row">
@@ -1612,19 +1592,21 @@ const DashboardPage = () => {
                       Source: AERONET AAQE GeoJSON forecast endpoint
                     </p>
                   </div>
-                ) : !analysisLocation ? (
+                ) : !analysisAnchor ? (
                   <p className="text-muted">Click a marker on the map or select a site from the left sidebar to view data.</p>
                 ) : null}
 
-                {analysisLocation && (
+                {analysisAnchor && (
                   <Suspense fallback={<ChartLoadingFallback />}>
                     <AnalysisPanel
-                      location={analysisLocation}
+                      location={analysisAnchor}
                       startDate={analysisStartDate}
                       endDate={analysisEndDate}
                       aeronetAodVersion={aeronetAodVersion}
                       analysisRange={analysisRange}
                       onAnalysisRangeChange={setAnalysisRange}
+                      onClearAnchor={clearAnalysisAnchor}
+                      preloadedStations={merra2Stations}
                     />
                   </Suspense>
                 )}

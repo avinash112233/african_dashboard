@@ -145,7 +145,11 @@ def cmd_timeseries(sitename: str, start: str, end: str):
     rows = []
     meta = None
     for year in range(int(start[:4]), int(end[:4]) + 1):
-        p = year_file(year)
+        try:
+            p = year_file(year)
+        except SystemExit:
+            # Parquet file for this year doesn't exist — skip silently.
+            continue
         df = pd.read_parquet(p)
         df = normalize_columns(df)
         df = df[df["sitename"].str.lower() == station_lower]
@@ -187,26 +191,72 @@ def cmd_timeseries(sitename: str, start: str, end: str):
     )
 
 
+def _station_meta_from_file(p: Path) -> pd.DataFrame:
+    """Read only station identity columns from a parquet file and deduplicate.
+
+    Uses a case-insensitive column lookup so it works regardless of column
+    naming conventions in the parquet schema.
+    """
+    schema = pq.read_schema(p)
+    lower_map = {c.lower(): c for c in schema.names}
+
+    def pick(*candidates):
+        for c in candidates:
+            if c.lower() in lower_map:
+                return lower_map[c.lower()]
+        return None
+
+    sitename_col = pick("sitename", "siteName", "SITE_NAME", "StationName")
+    country_col  = pick("country", "Country", "Country or Area Name")
+    address_col  = pick("fullAddress", "Full Address", "full_address", "address")
+    lat_col      = pick("latitude", "Latitude", "LATITUDE")
+    lon_col      = pick("longitude", "Longitude", "LONGITUDE")
+
+    if not sitename_col or not lat_col or not lon_col:
+        return pd.DataFrame()
+
+    cols_to_read = [c for c in [sitename_col, country_col, address_col, lat_col, lon_col] if c]
+    df = pd.read_parquet(p, columns=cols_to_read)
+
+    out = pd.DataFrame()
+    out["sitename"]    = df[sitename_col].astype(str).str.strip()
+    out["country"]     = df[country_col].astype(str).str.strip() if country_col else None
+    out["fullAddress"] = df[address_col].astype(str).str.strip() if address_col else None
+    out["latitude"]    = pd.to_numeric(df[lat_col], errors="coerce")
+    out["longitude"]   = pd.to_numeric(df[lon_col], errors="coerce")
+
+    out = out.dropna(subset=["latitude", "longitude"])
+    out = out[out["sitename"] != ""]
+    return out.drop_duplicates(subset=["sitename"])
+
+
 def cmd_station_list():
+    """Return unique stations from all year files.
+
+    Reads only the 5 coordinate/identity columns and deduplicates immediately —
+    much faster than iterating every row in a large parquet file.
+    """
     files = list_year_files()
-    seen = {}
+    frames = []
     for p in files:
-        df = pd.read_parquet(p)
-        df = normalize_columns(df)
-        for row in df.itertuples(index=False):
-            key = row.sitename
-            if key in seen:
-                continue
-            seen[key] = {
+        try:
+            frames.append(_station_meta_from_file(p))
+        except Exception:
+            continue
+    if not frames:
+        fail(6, "No stations found in parquet files.")
+    combined = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["sitename"])
+    stations = []
+    for row in combined.sort_values("sitename").itertuples(index=False):
+        stations.append(
+            {
                 "sitename": row.sitename,
                 "country": row.country,
                 "fullAddress": row.fullAddress,
                 "latitude": float(row.latitude),
                 "longitude": float(row.longitude),
             }
-    if not seen:
-        fail(6, "No stations found in parquet files.")
-    stations = [seen[k] for k in sorted(seen.keys())]
+        )
     print(json.dumps({"stations": stations}))
 
 

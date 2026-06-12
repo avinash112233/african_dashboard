@@ -12,10 +12,10 @@ dist
 dist-ssr
 *.local
 
-# Environment variables and secrets (never commit)
+# Environment variables and secrets (never commit actual .env files)
 .env
 .env.*
-.env.example
+!.env.example
 .env.local
 .env.production
 .env.development
@@ -26,9 +26,6 @@ setup-env.sh
 
 # Backup files
 *.bak
-
-# Documentation (kept locally, not in repo)
-*.md
 
 # Editor directories and files
 .vscode/*

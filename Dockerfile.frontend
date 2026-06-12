@@ -1,0 +1,35 @@
+# Frontend — React/Vite build → Nginx
+# Stage 1: Build the React app
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+# Build args for environment variables baked into the frontend bundle
+ARG VITE_FIRMS_MAP_KEY
+ARG VITE_AAQE_USE_DIRECT_NASA=false
+
+ENV VITE_FIRMS_MAP_KEY=$VITE_FIRMS_MAP_KEY
+ENV VITE_AAQE_USE_DIRECT_NASA=$VITE_AAQE_USE_DIRECT_NASA
+
+RUN npm run build
+
+# Stage 2: Serve with Nginx
+FROM nginx:alpine
+
+# Remove default nginx config
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom nginx config (handles SPA routing + API proxy to backend)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built React app
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
