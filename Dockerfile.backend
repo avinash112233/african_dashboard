@@ -1,11 +1,12 @@
 # Backend — Node.js Express + Python (MERRA2 data worker)
 FROM node:20-slim
 
-# Install Python 3 + pip + required packages for MERRA2 Parquet processing
+# Install Python 3 + pip + make `python` resolve to python3
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
+    python-is-python3 \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,8 +21,6 @@ RUN npm ci --omit=dev
 # Copy server source
 COPY server/ ./server/
 
-# MERRA2 Parquet files are mounted at runtime via docker-compose volume.
-# Set default path — override with MERRA2_PARQUET_DIR env variable.
 ENV MERRA2_PARQUET_DIR=/data/merra2
 ENV MERRA2_API_PORT=3001
 ENV NODE_ENV=production

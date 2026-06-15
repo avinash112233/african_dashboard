@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
 
   # ── Backend: Node.js Express + Python MERRA2 worker ──────────────────────
@@ -13,13 +11,9 @@ services:
       - NODE_ENV=production
       - MERRA2_PARQUET_DIR=/data/merra2
       - MERRA2_API_PORT=3001
-      # Optional: NASA Earthdata credentials for future MERRA2 data downloads
-      # - EARTHDATA_USERNAME=your_username
-      # - EARTHDATA_PASSWORD=your_password
     volumes:
-      # Mount your local MERRA2 Parquet folder into the container.
-      # Change the LEFT side to your actual Parquet files path on the host.
-      - ${MERRA2_HOST_DIR:-./data/merra2}:/data/merra2:ro
+      # Your local Parquet folder, mounted read-only into the container
+      - /home/ubuntu/AFRICAN_PM25_DATA/DATA_FOR_VISHAL:/data/merra2:ro
     expose:
       - "3001"
     healthcheck:
@@ -35,13 +29,12 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        # NASA FIRMS Map Key — required for fire hotspot layer
         VITE_FIRMS_MAP_KEY: ${VITE_FIRMS_MAP_KEY}
         VITE_AAQE_USE_DIRECT_NASA: "false"
     container_name: aqf_frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       backend:
         condition: service_healthy
