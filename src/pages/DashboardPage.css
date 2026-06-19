@@ -89,32 +89,45 @@
   width: calc(100% - 18px);
 }
 
-.merra2-classification-legend {
-  margin-top: 8px;
-  padding: 8px 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+/* ── MERRA2 selected station right panel ── */
+.merra2-panel {
+  font-size: 13px;
+  color: #374151;
 }
 
-.merra2-classification-legend strong {
-  font-size: 12px;
-  color: #334155;
+.merra2-panel-header {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
 }
 
-.merra2-classification-legend ul {
-  list-style: none;
-  margin: 6px 0 0 0;
-  padding: 0;
+.merra2-panel-site {
+  margin: 0 0 2px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
 }
 
-.merra2-classification-legend li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #475569;
-  margin-bottom: 4px;
+.merra2-panel-meta {
+  margin: 0;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+.merra2-panel-address {
+  font-size: 11px;
+  color: #6b7280;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.merra2-panel .data-source-footer {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 10px 0 0 0;
 }
 
 .dashboard-map-area {
@@ -608,4 +621,165 @@
   font-size: 11px;
   color: #666;
   margin-top: 12px;
+}
+
+/* ── AAQE PM2.5 Forecast panel ─────────────────────────────────── */
+.aaqe-panel {
+  font-size: 13px;
+  color: #374151;
+}
+
+.aaqe-panel-header {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.aaqe-panel-site {
+  margin: 0 0 2px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.aaqe-panel-meta {
+  margin: 0;
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+/* Key metrics — two cards side by side */
+.aaqe-metrics-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.aaqe-metric-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.aaqe-metric-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #111827;
+}
+
+.aaqe-metric-label {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 3px;
+}
+
+.aaqe-metric-cat {
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+/* Section labels */
+.aaqe-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin: 12px 0 6px 0;
+}
+
+/* Hourly merged table */
+.aaqe-hourly-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.aaqe-hourly-table th {
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.aaqe-hourly-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #f3f4f6;
+  color: #374151;
+}
+
+.aaqe-hourly-table tr:last-child td {
+  border-bottom: none;
+}
+
+.aaqe-row-selected td {
+  background: #eff6ff;
+  font-weight: 600;
+}
+
+.aaqe-aqi-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 3-day outlook grid */
+.aaqe-threeday-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.aaqe-threeday-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 6px;
+  text-align: center;
+}
+
+.aaqe-threeday-day {
+  font-size: 11px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.aaqe-threeday-date {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.aaqe-threeday-aqi {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.aaqe-threeday-cat {
+  font-size: 9px;
+  font-weight: 600;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.aaqe-panel .data-source-footer {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 10px 0 0 0;
 }

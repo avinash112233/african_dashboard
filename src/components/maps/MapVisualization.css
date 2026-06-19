@@ -76,11 +76,11 @@
   bottom: 18px;
   transform: translateX(-50%);
   z-index: 1000;
-  width: min(760px, 86%);
+  width: min(580px, 76%);
   background: #fff;
   border: 1px solid #d1d5db;
-  border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
   overflow: hidden;
   pointer-events: none;
 }
@@ -92,8 +92,8 @@
 
 .aaqe-bottom-legend-row span {
   text-align: center;
-  font-size: 12px;
-  padding: 4px 6px;
+  font-size: 10px;
+  padding: 3px 4px;
   line-height: 1.2;
   border-right: 1px solid rgba(15, 23, 42, 0.12);
 }
@@ -103,7 +103,7 @@
 }
 
 .aaqe-bottom-legend-row--labels span {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .aaqe-bottom-legend-row--ranges span {

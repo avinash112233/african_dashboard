@@ -101,6 +101,208 @@ function filterPointsByUtcDate(points: AAQEForecastPoint[], targetIso: string): 
   );
 }
 
+// ── AAQE Selected Panel ───────────────────────────────────────────────────────
+interface AaqeSelectedPanelProps {
+  data: SelectedAAQEData;
+  threeDayRows: Array<{ label: string; date: string; aqi: number }>;
+}
+
+function fmtHourCode(code: string): string {
+  const p = code.padStart(4, '0');
+  return `${p.slice(0, 2)}:${p.slice(2)} UTC`;
+}
+
+/** Readable text color for AQI value displayed on a white/light background. */
+function getAqiTextColor(aqi: number | null): string {
+  if (aqi == null || !Number.isFinite(aqi)) return '#6b7280';
+  if (aqi <= 50)  return '#16a34a';  // Good — dark green
+  if (aqi <= 100) return '#a16207';  // Moderate — dark amber (yellow → unreadable)
+  if (aqi <= 150) return '#c2410c';  // Unhealthy for Sensitive — dark orange
+  if (aqi <= 200) return '#b91c1c';  // Unhealthy — dark red
+  if (aqi <= 300) return '#7e22ce';  // Very Unhealthy — dark purple
+  return '#7f1d1d';                  // Hazardous — dark maroon
+}
+
+function AaqeSelectedPanel({ data, threeDayRows }: AaqeSelectedPanelProps) {
+  const aqiCat      = getAqiCategory(data.dailyAqi ?? null);
+  const aqiBgColor  = aqiCat.color;                          // original (may be bright)
+  const aqiTxtColor = getAqiTextColor(data.dailyAqi ?? null); // always readable on white
+
+  const aqiByCode = new Map(
+    data.hourlyAqi.map((h) => {
+      const m = h.label.match(/\((\d+)\)/);
+      return [m?.[1] ?? h.label, h.value] as [string, number];
+    })
+  );
+
+  return (
+    <div className="aaqe-panel">
+      {/* Location header */}
+      <div className="aaqe-panel-header">
+        <p className="aaqe-panel-site">{data.siteName ?? 'Unknown Site'}</p>
+        <p className="aaqe-panel-meta">AAQE PM2.5 Forecast</p>
+        {data.utcDate && (
+          <p className="aaqe-panel-meta">Forecast date: {data.utcDate}</p>
+        )}
+        <p className="aaqe-panel-meta">
+          {data.latitude.toFixed(4)}°, {data.longitude.toFixed(4)}°
+        </p>
+      </div>
+
+      {/* Key metrics */}
+      <div className="aaqe-metrics-row">
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: aqiTxtColor }}>
+            {data.dailyAqi ?? '—'}
+          </div>
+          <div className="aaqe-metric-label">Daily AQI</div>
+          <div className="aaqe-metric-cat" style={{ color: aqiTxtColor }}>{aqiCat.label}</div>
+        </div>
+        <div className="aaqe-metric-card">
+          <div className="aaqe-metric-value" style={{ color: '#1f2937' }}>
+            {data.selectedPm?.toFixed(1) ?? '—'}
+          </div>
+          <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
+          <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>
+            {data.selectedTimeCode
+              ? `at ${fmtHourCode(String(data.selectedTimeCode))}`
+              : '3-hourly'}
+          </div>
+        </div>
+      </div>
+
+      {/* Hourly table — one row per time slot, PM2.5 + AQI merged */}
+      {data.hourlyPm.length > 0 && (
+        <>
+          <div className="aaqe-section-label">3-Hour Intervals</div>
+          <table className="aaqe-hourly-table">
+            <thead>
+              <tr>
+                <th>Time (UTC)</th>
+                <th>PM2.5</th>
+                <th>AQI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.hourlyPm.map((h) => {
+                const m    = h.label.match(/\((\d+)\)/);
+                const code = m?.[1] ?? '';
+                const aqi  = aqiByCode.get(code);
+                const cat  = getAqiCategory(aqi ?? null);
+                const txtC = getAqiTextColor(aqi ?? null);
+                const isSelected = String(data.selectedTimeCode) === code;
+                return (
+                  <tr key={h.label} className={isSelected ? 'aaqe-row-selected' : ''}>
+                    <td>{fmtHourCode(code)}</td>
+                    <td>{h.value.toFixed(2)}</td>
+                    <td>
+                      {aqi != null ? (
+                        <span
+                          className="aaqe-aqi-badge"
+                          style={{
+                            background: cat.color + '30',
+                            color: txtC,
+                            borderColor: cat.color,
+                          }}
+                        >
+                          {Math.round(aqi)}
+                        </span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {/* 3-day outlook */}
+      {threeDayRows.length > 0 && (
+        <>
+          <div className="aaqe-section-label">3-Day Outlook</div>
+          <div className="aaqe-threeday-grid">
+            {threeDayRows.map((r) => {
+              const c    = getAqiCategory(r.aqi);
+              const txtC = getAqiTextColor(r.aqi);
+              return (
+                <div
+                  key={`${r.label}-${r.date}`}
+                  className="aaqe-threeday-card"
+                  style={{ borderTop: `3px solid ${c.color}` }}
+                >
+                  <div className="aaqe-threeday-day">{r.label}</div>
+                  <div className="aaqe-threeday-date">{r.date}</div>
+                  <div className="aaqe-threeday-aqi" style={{ color: txtC }}>
+                    {Math.round(r.aqi)}
+                  </div>
+                  <div className="aaqe-threeday-cat" style={{ color: txtC }}>{c.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <p className="data-source-footer">Source: AERONET AAQE GeoJSON</p>
+    </div>
+  );
+}
+
+
+interface Merra2SelectedPanelProps {
+  station: import('../services/merra2Api').MERRA2StationDailyRecord;
+  aqi: number | null;
+}
+
+function Merra2SelectedPanel({ station, aqi }: Merra2SelectedPanelProps) {
+  const aqiCat      = getAqiCategory(aqi);
+  const aqiBgColor  = aqiCat.color;
+  const aqiTxtColor = getAqiTextColor(aqi);
+
+  return (
+    <div className="merra2-panel">
+      <div className="merra2-panel-header">
+        <p className="merra2-panel-site">{station.sitename}</p>
+        <p className="merra2-panel-meta">MERRA2 CNN PM2.5 Station</p>
+        {station.country && (
+          <p className="merra2-panel-meta">{station.country}</p>
+        )}
+        <p className="merra2-panel-meta">
+          {station.latitude.toFixed(4)}°, {station.longitude.toFixed(4)}°
+        </p>
+        <p className="merra2-panel-meta">Data date: {formatDateMonthDayYear(station.date)}</p>
+      </div>
+
+      <div className="aaqe-metrics-row">
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: aqiTxtColor }}>
+            {aqi ?? '—'}
+          </div>
+          <div className="aaqe-metric-label">AQI</div>
+          <div className="aaqe-metric-cat" style={{ color: aqiTxtColor }}>{aqiCat.label}</div>
+        </div>
+        <div className="aaqe-metric-card">
+          <div className="aaqe-metric-value" style={{ color: '#1f2937' }}>
+            {station.pm25.toFixed(1)}
+          </div>
+          <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
+          <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>daily average</div>
+        </div>
+      </div>
+
+      {station.fullAddress && (
+        <div className="merra2-panel-address">
+          <span className="aaqe-section-label" style={{ display: 'inline', marginBottom: 0 }}>Location: </span>
+          {station.fullAddress}
+        </div>
+      )}
+
+      <p className="data-source-footer">Source: MERRA2 parquet station archive</p>
+    </div>
+  );
+}
+
 const DashboardPage = () => {
   const [selectedDate, setSelectedDate] = useState(dayjs());
   const [selectedFire, setSelectedFire] = useState<SelectedFireData | null>(null);
@@ -820,7 +1022,6 @@ const DashboardPage = () => {
   const selectedMerra2Aqi = activeSelectedMerra2Station
     ? calculateAQIFromPm25(activeSelectedMerra2Station.pm25)
     : null;
-  const selectedMerra2AqiCategory = getAqiCategory(selectedMerra2Aqi);
   const hasMapSelection = Boolean(
     selectedSite || selectedFire || selectedMerra2Station || selectedAAQE
   );
@@ -1032,35 +1233,7 @@ const DashboardPage = () => {
                 <>
                   {merra2Error && <small className="layer-tip layer-tip-warn">⚠ {merra2Error}</small>}
                   {merra2Notice && <small className="layer-tip">{merra2Notice}</small>}
-                  <div className="merra2-classification-legend">
-                    <strong>MERRA2 PM2.5 AQI:</strong>
-                    <ul>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#00e400' }} />
-                        0-50 {'->'} Good
-                      </li>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#ffff00' }} />
-                        51-100 {'->'} Moderate
-                      </li>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#ff7e00' }} />
-                        101-150 {'->'} Unhealthy for Sensitive Groups
-                      </li>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#ff0000' }} />
-                        151-200 {'->'} Unhealthy
-                      </li>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#8f3f97' }} />
-                        201-300 {'->'} Very Unhealthy
-                      </li>
-                      <li>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: '#7e0023' }} />
-                        301+ {'->'} Hazardous
-                      </li>
-                    </ul>
-                  </div>
+                  <small className="layer-tip">Click a station on the map to view PM2.5 and AQI details. AQI scale shown at the bottom of the map.</small>
                 </>
               )}
               {showAeronet && (
@@ -1155,6 +1328,7 @@ const DashboardPage = () => {
                   </div>
                 </div>
               )}
+
             </div>
             {showAeronet && selectedSite && (
               <div className="charts-section" style={{ paddingTop: 14 }}>
@@ -1507,81 +1681,12 @@ const DashboardPage = () => {
                     <p className="data-source-footer">Source: NASA FIRMS (VIIRS NOAA-21)</p>
                   </div>
                 ) : activeSelectedMerra2Station ? (
-                  <div className="selected-pm25-details">
-                    <p className="data-source">MERRA2 CNN PM2.5 Station</p>
-                    <table className="selected-data-table">
-                      <tbody>
-                        <tr><td>STATION</td><td>{activeSelectedMerra2Station.sitename}</td></tr>
-                        <tr><td>COUNTRY</td><td>{activeSelectedMerra2Station.country ?? '—'}</td></tr>
-                        <tr><td>ADDRESS</td><td>{activeSelectedMerra2Station.fullAddress ?? '—'}</td></tr>
-                        <tr><td>PM2.5 (µg/m³)</td><td><strong>{activeSelectedMerra2Station.pm25.toFixed(2)}</strong></td></tr>
-                        <tr>
-                          <td>AQI</td>
-                          <td>
-                            <strong>{selectedMerra2Aqi ?? '—'}</strong>
-                            {' '}({selectedMerra2AqiCategory.label})
-                          </td>
-                        </tr>
-                        <tr><td>LAT / LON</td><td className="coord-cell">{activeSelectedMerra2Station.latitude.toFixed(5)}, {activeSelectedMerra2Station.longitude.toFixed(5)}</td></tr>
-                        <tr><td>DATE</td><td>{formatDateMonthDayYear(activeSelectedMerra2Station.date)}</td></tr>
-                      </tbody>
-                    </table>
-                    <p className="data-source-footer">
-                      Source: MERRA2 parquet station archive
-                    </p>
-                  </div>
+                  <Merra2SelectedPanel
+                    station={activeSelectedMerra2Station}
+                    aqi={selectedMerra2Aqi}
+                  />
                 ) : activeSelectedAAQE ? (
-                  <div className="selected-pm25-details">
-                    <p className="data-source">AAQE PM2.5 Forecast Station</p>
-                    <table className="selected-data-table">
-                      <tbody>
-                        <tr><td>SITE</td><td>{activeSelectedAAQE.siteName ?? '—'}</td></tr>
-                        <tr><td>STATION</td><td>{activeSelectedAAQE.station ?? '—'}</td></tr>
-                        <tr><td>FORECAST DATE (UTC)</td><td>{activeSelectedAAQE.utcDate ?? '—'}</td></tr>
-                        <tr><td>TIME SLOT</td><td>{activeSelectedAAQE.selectedTimeCode ?? '—'} UTC</td></tr>
-                        <tr><td>3HR PM2.5 (µg/m³)</td><td>{activeSelectedAAQE.selectedPm?.toFixed(2) ?? '—'}</td></tr>
-                        <tr><td>DAILY AQI</td><td>{activeSelectedAAQE.dailyAqi ?? '—'}</td></tr>
-                        <tr><td>AQI CATEGORY</td><td>{getAqiCategory(activeSelectedAAQE.dailyAqi ?? null).label}</td></tr>
-                        <tr><td>LAT / LON</td><td className="coord-cell">{activeSelectedAAQE.latitude.toFixed(5)}, {activeSelectedAAQE.longitude.toFixed(5)}</td></tr>
-                      </tbody>
-                    </table>
-                    {activeSelectedAAQE.hourlyPm.length > 0 && (
-                      <table className="selected-data-table">
-                        <tbody>
-                          <tr><td colSpan={2}><strong>3HR PM2.5 Forecast (CNN)</strong></td></tr>
-                          {activeSelectedAAQE.hourlyPm.map((h) => (
-                            <tr key={h.label}><td>{h.label}</td><td>{h.value.toFixed(2)}</td></tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {activeSelectedAAQE.hourlyAqi.length > 0 && (
-                      <table className="selected-data-table">
-                        <tbody>
-                          <tr><td colSpan={2}><strong>3HR AQI Forecast</strong></td></tr>
-                          {activeSelectedAAQE.hourlyAqi.map((h) => (
-                            <tr key={h.label}><td>{h.label}</td><td>{Math.round(h.value)}</td></tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {aaqeThreeDayRows.length > 0 && (
-                      <table className="selected-data-table">
-                        <tbody>
-                          <tr><td colSpan={2}><strong>3-Day DAILY AQI Forecast</strong></td></tr>
-                          {aaqeThreeDayRows.map((r) => (
-                            <tr key={`${r.label}-${r.date}`}>
-                              <td>{r.label} ({r.date})</td>
-                              <td>{Math.round(r.aqi)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    <p className="data-source-footer">
-                      Source: AERONET AAQE GeoJSON forecast endpoint
-                    </p>
-                  </div>
+                  <AaqeSelectedPanel data={activeSelectedAAQE} threeDayRows={aaqeThreeDayRows} />
                 ) : !analysisAnchor ? (
                   <p className="text-muted">Click a marker on the map or select a site from the left sidebar to view data.</p>
                 ) : null}

@@ -79,9 +79,17 @@ async function fetchMerra2Series(
     }
     return { id, source: 'merra2', variable, label: def.label, unit: def.unit, points };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // "No data found" and "Command failed" with empty parquet range are expected when
+    // the selected date range extends beyond the latest available Parquet year.
+    // Treat as empty (no red error) so the chart renders cleanly without MERRA2 data.
+    const isNoData =
+      /no pm2\.5 time-series data found/i.test(msg) ||
+      /no station data found/i.test(msg) ||
+      /command failed/i.test(msg);
     return {
       id, source: 'merra2', variable, label: def.label, unit: def.unit, points: [],
-      error: err instanceof Error ? err.message : 'MERRA2 fetch failed',
+      error: isNoData ? undefined : msg,
     };
   }
 }
@@ -176,6 +184,14 @@ async function fetchFireCountSeries(
   }
 }
 
+/** Resolves to `fallback` after `ms` milliseconds — used to cap a slow/dead API. */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export async function fetchAnalysisSeries(
   variableIds: AnalysisVariableId[],
   location: AnalysisLocationContext,
@@ -183,37 +199,45 @@ export async function fetchAnalysisSeries(
   end: string,
   aeronetAodVersion: AERONETAODVersion
 ): Promise<NormalizedSeries[]> {
-  const results: NormalizedSeries[] = [];
-  for (const vid of variableIds) {
+  const TIMEOUT_MS = 12_000;
+
+  const promises = variableIds.map((vid): Promise<NormalizedSeries | null> => {
     const def = getVariableDef(vid);
-    if (!def) continue;
+    if (!def) return Promise.resolve(null);
+
+    const empty = (error?: string): NormalizedSeries => ({
+      id: `skip-${vid}`, source: def.source as NormalizedSeries['source'],
+      variable: vid, label: def.label, unit: def.unit, points: [], error,
+    });
+
+    let fetch: Promise<NormalizedSeries>;
+
     if (def.source === 'aeronet') {
       const site = location.aeronetQuerySite;
       if (!site) {
-        results.push({
-          id: `skip-${vid}`, source: 'aeronet', variable: vid,
-          label: def.label, unit: def.unit, points: [],
-          // Only surface an error when the user clicked an AERONET marker.
-          error: location.anchorSource === 'aeronet'
+        return Promise.resolve(empty(
+          location.anchorSource === 'aeronet'
             ? 'AERONET site ID missing — try re-clicking the site'
-            : undefined,
-        });
-        continue;
+            : undefined
+        ));
       }
-      results.push(await fetchAeronetSeries(vid, site, start, end, aeronetAodVersion));
+      fetch = fetchAeronetSeries(vid, site, start, end, aeronetAodVersion);
     } else if (def.source === 'merra2') {
       const sitename = location.merra2Sitename;
-      if (!sitename) {
-        // Station not yet resolved — shown in sidebar metadata, not as an error here.
-        results.push({ id: `skip-${vid}`, source: 'merra2', variable: vid, label: def.label, unit: def.unit, points: [] });
-        continue;
-      }
-      results.push(await fetchMerra2Series(vid, sitename, start, end));
+      if (!sitename) return Promise.resolve(empty());
+      fetch = fetchMerra2Series(vid, sitename, start, end);
     } else if (def.source === 'aaqe') {
-      results.push(await fetchAaqeSeries(vid, location.latitude, location.longitude, start, end));
+      fetch = fetchAaqeSeries(vid, location.latitude, location.longitude, start, end);
     } else if (def.source === 'firms') {
-      results.push(await fetchFireCountSeries(vid, location.latitude, location.longitude, start, end));
+      fetch = fetchFireCountSeries(vid, location.latitude, location.longitude, start, end);
+    } else {
+      return Promise.resolve(null);
     }
-  }
-  return results;
+
+    // Cap each source at 12 s — if NASA is down the panel still loads cleanly.
+    return withTimeout(fetch, TIMEOUT_MS, empty());
+  });
+
+  const results = await Promise.all(promises);
+  return results.filter((r): r is NormalizedSeries => r !== null);
 }

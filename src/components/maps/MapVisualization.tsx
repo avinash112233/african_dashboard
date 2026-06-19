@@ -294,7 +294,7 @@ const MapVisualization = ({
           Lat: {cursorCoords.lat.toFixed(4)}  Lon: {cursorCoords.lng.toFixed(4)}
         </div>
       )}
-      {showAAQEForecast && (
+      {(showAAQEForecast || showMERRA2PM25) && (
         <div className="aaqe-bottom-legend" aria-label="AQI category legend">
           <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
             <span style={{ background: '#00e400' }}>Good</span>
