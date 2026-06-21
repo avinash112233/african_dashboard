@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -10,7 +10,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 import HomePage from './pages/HomePage';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
-const DataDownloadPage = lazy(() => import('./pages/DataDownloadPage'));
 const PublicationsPage = lazy(() => import('./pages/PublicationsPage'));
 const TeamPage = lazy(() => import('./pages/TeamPage'));
 
@@ -25,7 +24,8 @@ function App() {
         <div className="App">
           <Navigation />
           <Routes>
-            <Route path="/" element={<HomePage />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/home" element={<HomePage />} />
             <Route
               path="/dashboard"
               element={
@@ -34,14 +34,6 @@ function App() {
                     <DashboardPage />
                   </Suspense>
                 </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/data-download"
-              element={
-                <Suspense fallback={<PageFallback />}>
-                  <DataDownloadPage />
-                </Suspense>
               }
             />
             <Route

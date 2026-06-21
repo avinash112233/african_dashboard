@@ -1,11 +1,11 @@
 .dashboard-page {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--navbar-height, 60px));
   background-color: #f8f9fa;
 }
 
 .dashboard-layout {
   display: flex;
-  height: calc(100vh - 56px);
+  height: calc(100vh - var(--navbar-height, 60px));
   overflow: hidden;
   position: relative;
 }

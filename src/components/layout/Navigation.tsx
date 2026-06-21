@@ -11,21 +11,22 @@ const Navigation = () => {
 
   return (
     <Navbar expand="lg" className="navbar-custom">
-      <Container fluid>
-        <Navbar.Brand as={Link} to="/">
-          African Aerosol Dashboard
+      <Container fluid className="navbar-inner">
+        <Navbar.Brand as={Link} to="/dashboard" className="navbar-brand-wrap">
+          <span className="navbar-brand-text">African Aerosol Dashboard</span>
         </Navbar.Brand>
-        <Navbar.Toggle aria-controls="basic-navbar-nav" />
-        <Navbar.Collapse id="basic-navbar-nav">
-          <Nav className="ms-auto">
-            <Nav.Link as={Link} to="/" className={isActive('/')}>
+        <Navbar.Toggle aria-controls="basic-navbar-nav" className="navbar-toggle-btn" />
+        <Navbar.Collapse id="basic-navbar-nav" className="navbar-collapse-wrap">
+          <Nav className="navbar-nav-links">
+            <Nav.Link as={Link} to="/home" className={isActive('/home')}>
               Home
             </Nav.Link>
-            <Nav.Link as={Link} to="/dashboard" className={isActive('/dashboard')}>
+            <Nav.Link
+              as={Link}
+              to="/dashboard"
+              className={`nav-link-dashboard ${isActive('/dashboard')}`}
+            >
               Dashboard
-            </Nav.Link>
-            <Nav.Link as={Link} to="/data-download" className={isActive('/data-download')}>
-              Data Download
             </Nav.Link>
             <Nav.Link as={Link} to="/publications" className={isActive('/publications')}>
               Publications
