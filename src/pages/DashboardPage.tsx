@@ -55,6 +55,24 @@ import {
 import type { AnalysisLocationContext } from '../analysis/types';
 import './DashboardPage.css';
 
+const COMPACT_LAYOUT_MAX_PX = 1023;
+
+function useCompactLayout() {
+  const [isCompact, setIsCompact] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(`(max-width: ${COMPACT_LAYOUT_MAX_PX}px)`).matches
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${COMPACT_LAYOUT_MAX_PX}px)`);
+    const onChange = (e: MediaQueryListEvent) => setIsCompact(e.matches);
+    setIsCompact(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  return isCompact;
+}
+
 interface SelectedFireData {
   latitude: number;
   longitude: number;
@@ -253,9 +271,11 @@ function AaqeSelectedPanel({ data, threeDayRows }: AaqeSelectedPanelProps) {
 interface Merra2SelectedPanelProps {
   station: import('../services/merra2Api').MERRA2StationDailyRecord;
   aqi: number | null;
+  dataDate: string;
+  metricsLoading?: boolean;
 }
 
-function Merra2SelectedPanel({ station, aqi }: Merra2SelectedPanelProps) {
+function Merra2SelectedPanel({ station, aqi, dataDate, metricsLoading }: Merra2SelectedPanelProps) {
   const aqiCat      = getAqiCategory(aqi);
   const aqiBgColor  = aqiCat.color;
   const aqiTxtColor = getAqiTextColor(aqi);
@@ -271,20 +291,22 @@ function Merra2SelectedPanel({ station, aqi }: Merra2SelectedPanelProps) {
         <p className="merra2-panel-meta">
           {station.latitude.toFixed(4)}°, {station.longitude.toFixed(4)}°
         </p>
-        <p className="merra2-panel-meta">Data date: {formatDateMonthDayYear(station.date)}</p>
+        <p className="merra2-panel-meta">Data date: {formatDateMonthDayYear(dataDate)}</p>
       </div>
 
       <div className="aaqe-metrics-row">
-        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${aqiBgColor}` }}>
-          <div className="aaqe-metric-value" style={{ color: aqiTxtColor }}>
-            {aqi ?? '—'}
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${metricsLoading ? '#d1d5db' : aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? '…' : (aqi ?? '—')}
           </div>
           <div className="aaqe-metric-label">AQI</div>
-          <div className="aaqe-metric-cat" style={{ color: aqiTxtColor }}>{aqiCat.label}</div>
+          <div className="aaqe-metric-cat" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? 'Updating…' : aqiCat.label}
+          </div>
         </div>
         <div className="aaqe-metric-card">
-          <div className="aaqe-metric-value" style={{ color: '#1f2937' }}>
-            {station.pm25.toFixed(1)}
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : '#1f2937' }}>
+            {metricsLoading ? '…' : station.pm25.toFixed(1)}
           </div>
           <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
           <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>daily average</div>
@@ -347,9 +369,18 @@ const DashboardPage = () => {
   const [fireChartBounds, setFireChartBounds] = useState<LatLonBounds | null>(null);
   const [fireLoading, setFireLoading] = useState(false);
   const [merra2Loading, setMerra2Loading] = useState(false);
+  const [merra2ShowStations, setMerra2ShowStations] = useState(true);
+  const [merra2ShowGridOverlay, setMerra2ShowGridOverlay] = useState(false);
+  const [merra2GridLoading, setMerra2GridLoading] = useState(false);
+  const [merra2GridSource, setMerra2GridSource] = useState<'gesdisc' | 'sample' | null>(null);
+  const [merra2GridFallbackReason, setMerra2GridFallbackReason] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarPeek, setSidebarPeek] = useState(false);
   const [aeronetLoading, setAeronetLoading] = useState(false);
   const [aeronetError, setAeronetError] = useState<string | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const isCompactLayout = useCompactLayout();
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
   const [analysisAnchor, setAnalysisAnchor] = useState<AnalysisLocationContext | null>(null);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
@@ -376,13 +407,13 @@ const DashboardPage = () => {
 
   const effectiveSelectedDate = selectedDate.isAfter(dayjs(), 'day') ? dayjs() : selectedDate;
   const effectiveSelectedDateStr = effectiveSelectedDate.format('YYYY-MM-DD');
-  const merra2DefaultLatestDate = '2025-12-31';
   const merra2RequestedDate = useMemo(() => {
-    const maxSupported = dayjs(merra2DefaultLatestDate);
+    if (!merra2LatestDate) return effectiveSelectedDateStr;
+    const maxSupported = dayjs(merra2LatestDate, 'YYYY-MM-DD');
     return effectiveSelectedDate.isAfter(maxSupported, 'day')
-      ? merra2DefaultLatestDate
+      ? merra2LatestDate
       : effectiveSelectedDateStr;
-  }, [effectiveSelectedDate, effectiveSelectedDateStr]);
+  }, [effectiveSelectedDate, effectiveSelectedDateStr, merra2LatestDate]);
   const { startDate: analysisStartDate, endDate: analysisEndDate } = getDateRange(effectiveSelectedDateStr, analysisRange);
   const merra2AnalysisStartDate = merra2AppliedRange.start;
   const merra2AnalysisEndDate = merra2AppliedRange.end;
@@ -473,7 +504,7 @@ const DashboardPage = () => {
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
 
-  // Fire hotspots: prefetch on mount and when date changes (FIRMS is cached 15 min).
+  // Fire hotspots: prefetch once on mount (7-day WFS; client cache 15 min).
   useEffect(() => {
     let cancelled = false;
     setFireLoading(true);
@@ -481,25 +512,26 @@ const DashboardPage = () => {
       .then((pts) => { if (!cancelled) setFirePoints(pts); })
       .finally(() => { if (!cancelled) setFireLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedDate]);
+  }, []);
 
   useEffect(() => {
     setAaqeTimeCode(getDefaultAaqeTimeCodeFromUtc());
   }, []);
 
-  // AAQE forecast: 1 s delayed prefetch so AERONET (same NASA API) gets priority on first load.
+  // AAQE forecast: load only when layer is active (avoids competing with other layers on mount).
   useEffect(() => {
+    if (!showAAQEForecast) return;
+
     const requested = selectedDate.isAfter(dayjs(), 'day')
       ? dayjs().format('YYYY-MM-DD')
       : selectedDate.format('YYYY-MM-DD');
 
     let cancelled = false;
-    const startTimer = window.setTimeout(() => {
-      if (cancelled) return;
-      setAaqeLoading(true);
-      setAaqeError(null);
-      setAaqeNotice(null);
-      (async () => {
+    setAaqeLoading(true);
+    setAaqeError(null);
+    setAaqeNotice(null);
+
+    (async () => {
       const nearest = await findNearestAAQEForecastInitDate(requested);
       if (cancelled) return;
       if (!nearest) {
@@ -529,21 +561,14 @@ const DashboardPage = () => {
         ]);
         if (cancelled) return;
         const pools = [rawInit, rawInitPlus1, rawInitPlus2];
-        const resolveForTarget = (target: string): AAQEForecastPoint[] => {
-          for (const pool of pools) {
-            const hit = filterPointsByUtcDate(pool, target);
-            if (hit.length > 0) return hit;
-          }
-          return [];
-        };
         const byDateFinal: Record<string, AAQEForecastPoint[]> = {};
         for (const { iso } of forecastDays) {
-          let pts = resolveForTarget(iso);
-          if (pts.length === 0) {
-            try {
-              pts = await getAAQEForecastByDate(iso);
-            } catch {
-              pts = [];
+          let pts: AAQEForecastPoint[] = [];
+          for (const pool of pools) {
+            const hit = filterPointsByUtcDate(pool, iso);
+            if (hit.length > 0) {
+              pts = hit;
+              break;
             }
           }
           byDateFinal[iso] = pts;
@@ -569,13 +594,11 @@ const DashboardPage = () => {
         if (!cancelled) setAaqeLoading(false);
       }
     })();
-    }, 1000);
 
     return () => {
       cancelled = true;
-      window.clearTimeout(startTimer);
     };
-  }, [selectedDate]);
+  }, [selectedDate, showAAQEForecast]);
 
   useEffect(() => {
     if (!aaqeForecastDate) return;
@@ -599,8 +622,10 @@ const DashboardPage = () => {
     }
   }, [analysisStartDate, analysisEndDate, selectedSite?.site, selectedSite?.name, aeronetAodVersion]);
 
-  // Debounced prefetch of AERONET AOD colors for the active date.
+  // Debounced prefetch of AERONET AOD colors — only when AERONET layer is active.
   useEffect(() => {
+    if (!showAeronet) return;
+
     const day = aeronetEnd.format('YYYY-MM-DD');
     let cancelled = false;
     const t = window.setTimeout(() => {
@@ -612,7 +637,7 @@ const DashboardPage = () => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [aeronetEnd, aeronetAodVersion]);
+  }, [showAeronet, aeronetEnd, aeronetAodVersion]);
 
   const handleMerra2StationClick = useCallback((station: MERRA2StationDailyRecord) => {
     setSelectedMerra2Station(station);
@@ -621,6 +646,7 @@ const DashboardPage = () => {
     setSelectedAAQE(null);
     setAnalysisAnchor(anchorFromMerra2(station));
     setChartData([]);
+    setLeftPanelOpen(false);
     setRightPanelOpen(true);
   }, []);
 
@@ -650,12 +676,30 @@ const DashboardPage = () => {
     };
   }, [aeronetSites.length]);
 
+  // Latest Parquet date — drives date cap and default when opening MERRA2 layer.
   useEffect(() => {
+    let cancelled = false;
+    getMERRA2LatestDate()
+      .then((latest) => {
+        if (!cancelled && latest.latestDate) setMerra2LatestDate(latest.latestDate);
+      })
+      .catch(() => {
+        // Non-fatal; stations fallback will retry latest-date on missing data.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showMERRA2PM25) return;
+
     let cancelled = false;
     const loadStations = async () => {
       setMerra2Loading(true);
       setMerra2Error(null);
       setMerra2Notice(null);
+      setMerra2DataDate(null);
       const requestedDate = merra2RequestedDate;
 
       try {
@@ -720,10 +764,10 @@ const DashboardPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [merra2RequestedDate, merra2LatestDate]);
+  }, [merra2RequestedDate, showMERRA2PM25]);
 
   useEffect(() => {
-    const endBase = dayjs(merra2DataDate ?? merra2RequestedDate, 'YYYY-MM-DD');
+    const endBase = dayjs(merra2RequestedDate, 'YYYY-MM-DD');
     const nextTo = endBase;
     const nextFrom = endBase.subtract(6, 'day');
     setMerra2DateFrom(nextFrom);
@@ -732,7 +776,7 @@ const DashboardPage = () => {
       start: nextFrom.format('YYYY-MM-DD'),
       end: nextTo.format('YYYY-MM-DD'),
     });
-  }, [merra2DataDate, merra2RequestedDate, selectedMerra2Station?.sitename]);
+  }, [merra2RequestedDate, selectedMerra2Station?.sitename]);
 
   useEffect(() => {
     if (!showMERRA2PM25 || !selectedMerra2Station) return;
@@ -826,6 +870,7 @@ const DashboardPage = () => {
     setSelectedAAQE(null);
     setAnalysisAnchor(anchorFromAeronet(site));
     setChartData([]);
+    setLeftPanelOpen(false);
     setRightPanelOpen(true);
   }, []);
 
@@ -854,6 +899,7 @@ const DashboardPage = () => {
     setSelectedMerra2Station(null);
     setSelectedAAQE(null);
     setChartData([]);
+    setLeftPanelOpen(false);
     setRightPanelOpen(true);
     setAnalysisAnchor(anchorFromFire(fire.latitude, fire.longitude));
     setSelectedFire({
@@ -916,6 +962,7 @@ const DashboardPage = () => {
     setSelectedMerra2Station(null);
     setSelectedFire(null);
     setChartData([]);
+    setLeftPanelOpen(false);
     setRightPanelOpen(true);
   }, [aaqeTimeCode, aaqeDisplayType]);
 
@@ -938,9 +985,12 @@ const DashboardPage = () => {
         setFireChartRectDrawActive(false);
         setFireChartBounds(null);
       }
+      if (next === 'merra2' && merra2LatestDate) {
+        setSelectedDate(dayjs(merra2LatestDate, 'YYYY-MM-DD'));
+      }
       return next;
     });
-  }, []);
+  }, [merra2LatestDate]);
 
   const applyMerra2Range = useCallback(() => {
     const from = merra2DateFrom;
@@ -954,7 +1004,7 @@ const DashboardPage = () => {
   }, [merra2DateFrom, merra2DateTo]);
 
   const resetMerra2Range = useCallback(() => {
-    const endBase = dayjs(merra2DataDate ?? merra2RequestedDate, 'YYYY-MM-DD');
+    const endBase = dayjs(merra2RequestedDate, 'YYYY-MM-DD');
     const nextTo = endBase;
     const nextFrom = endBase.subtract(6, 'day');
     setMerra2DateFrom(nextFrom);
@@ -963,11 +1013,22 @@ const DashboardPage = () => {
       start: nextFrom.format('YYYY-MM-DD'),
       end: nextTo.format('YYYY-MM-DD'),
     });
-  }, [merra2DataDate, merra2RequestedDate]);
+  }, [merra2RequestedDate]);
+
+  const merra2PanelDataDate = merra2DataDate ?? merra2RequestedDate;
+  const merra2PanelStation = useMemo(() => {
+    if (!showMERRA2PM25 || !selectedMerra2Station) return null;
+    if (!merra2DataDate) return selectedMerra2Station;
+    return (
+      merra2Stations.find((s) => s.sitename === selectedMerra2Station.sitename) ??
+      selectedMerra2Station
+    );
+  }, [showMERRA2PM25, selectedMerra2Station, merra2DataDate, merra2Stations]);
+  const merra2PanelMetricsLoading = showMERRA2PM25 && Boolean(selectedMerra2Station) && merra2Loading;
 
   const activeSelectedSite = showAeronet ? selectedSite : null;
   const activeSelectedFire = showFires ? selectedFire : null;
-  const activeSelectedMerra2Station = showMERRA2PM25 ? selectedMerra2Station : null;
+  const activeSelectedMerra2Station = merra2PanelStation;
   const activeSelectedAAQE = showAAQEForecast ? selectedAAQE : null;
   const aaqeForecastDateOptions = useMemo(() => {
     if (!showAAQEForecast) return [];
@@ -1026,11 +1087,50 @@ const DashboardPage = () => {
     selectedSite || selectedFire || selectedMerra2Station || selectedAAQE
   );
   const showRightPanel = hasMapSelection || analysisAnchor != null;
+  const closeMobileDrawers = useCallback(() => {
+    setLeftPanelOpen(false);
+    setRightPanelOpen(false);
+  }, []);
 
   return (
     <div className="dashboard-page">
-        <div className="dashboard-layout">
-          <aside className="dashboard-sidebar-left">
+        <div className={`dashboard-layout${isCompactLayout ? ' dashboard-layout--compact' : ''}`}>
+          {isCompactLayout && (leftPanelOpen || (rightPanelOpen && showRightPanel)) && (
+            <button
+              type="button"
+              className="dashboard-drawer-backdrop"
+              aria-label="Close panels"
+              onClick={closeMobileDrawers}
+            />
+          )}
+          <aside
+            className={`dashboard-sidebar-left${isCompactLayout ? ' dashboard-sidebar-drawer' : ''}${isCompactLayout && leftPanelOpen ? ' is-open' : ''}${!isCompactLayout && sidebarCollapsed ? ' dashboard-sidebar-left--collapsed' : ''}${!isCompactLayout && sidebarCollapsed && sidebarPeek ? ' dashboard-sidebar-left--peek' : ''}`}
+            onMouseEnter={() => {
+              if (!isCompactLayout && sidebarCollapsed) setSidebarPeek(true);
+            }}
+            onMouseLeave={() => {
+              if (!isCompactLayout && sidebarCollapsed) setSidebarPeek(false);
+            }}
+          >
+            {!isCompactLayout && (
+              <button
+                type="button"
+                className="sidebar-collapse-btn"
+                onClick={() => {
+                  setSidebarCollapsed((c) => !c);
+                  setSidebarPeek(false);
+                }}
+                aria-label={sidebarCollapsed ? 'Expand layers panel' : 'Collapse layers panel'}
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                {sidebarCollapsed ? '›' : '‹'}
+              </button>
+            )}
+            <div className="sidebar-rail" aria-hidden={!sidebarCollapsed || sidebarPeek}>
+              <span className="sidebar-rail-icon">☰</span>
+              <span className="sidebar-rail-label">Layers</span>
+            </div>
+            <div className="sidebar-panel-body">
             <div className="sidebar-section">
               <h6>Date Selection</h6>
               <DatePicker
@@ -1157,6 +1257,45 @@ const DashboardPage = () => {
                 />
                 MERRA2 CNN PM2.5 {merra2Loading && '(loading…)'}
               </label>
+              {showMERRA2PM25 && (
+                <>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={merra2ShowStations}
+                      onChange={(e) => setMerra2ShowStations(e.target.checked)}
+                    />
+                    Station markers
+                  </label>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={merra2ShowGridOverlay}
+                      onChange={(e) => {
+                        setMerra2ShowGridOverlay(e.target.checked);
+                        if (!e.target.checked) {
+                          setMerra2GridSource(null);
+                          setMerra2GridFallbackReason(null);
+                        }
+                      }}
+                    />
+                    CNN PM2.5 grid overlay
+                  </label>
+                  {merra2ShowStations && (
+                    <small className="layer-tip">
+                      Click a station for PM2.5 / AQI details. AQI scale on map when markers are on.
+                    </small>
+                  )}
+                  {merra2Error && <small className="layer-tip layer-tip-warn">⚠ {merra2Error}</small>}
+                  {merra2Notice && <small className="layer-tip">{merra2Notice}</small>}
+                  {merra2ShowGridOverlay && merra2GridSource === 'sample' && (
+                    <small className="layer-tip layer-tip-warn">
+                      ⚠ Grid showing sample data — check Earthdata credentials and restart backend
+                      {merra2GridFallbackReason ? ` (${merra2GridFallbackReason})` : ''}.
+                    </small>
+                  )}
+                </>
+              )}
               <label className="layer-checkbox">
                 <input
                   type="checkbox"
@@ -1229,13 +1368,6 @@ const DashboardPage = () => {
               {showAAQEForecast && aaqeError && (
                 <small className="layer-tip layer-tip-warn">⚠ {aaqeError}</small>
               )}
-              {showMERRA2PM25 && (
-                <>
-                  {merra2Error && <small className="layer-tip layer-tip-warn">⚠ {merra2Error}</small>}
-                  {merra2Notice && <small className="layer-tip">{merra2Notice}</small>}
-                  <small className="layer-tip">Click a station on the map to view PM2.5 and AQI details. AQI scale shown at the bottom of the map.</small>
-                </>
-              )}
               {showAeronet && (
                 <div className="aod-classification-legend">
                   <strong>AOD Classification:</strong>
@@ -1254,9 +1386,42 @@ const DashboardPage = () => {
                 </div>
               )}
             </div>
+            </div>
           </aside>
 
           <main className="dashboard-map-area">
+            {isCompactLayout && (
+              <div className="dashboard-mobile-controls">
+                <button
+                  type="button"
+                  className={`dashboard-mobile-btn${leftPanelOpen ? ' dashboard-mobile-btn--active' : ''}`}
+                  onClick={() => {
+                    setLeftPanelOpen((open) => {
+                      const next = !open;
+                      if (next) setRightPanelOpen(false);
+                      return next;
+                    });
+                  }}
+                >
+                  Layers
+                </button>
+                {showRightPanel && (
+                  <button
+                    type="button"
+                    className={`dashboard-mobile-btn${rightPanelOpen ? ' dashboard-mobile-btn--active' : ''}`}
+                    onClick={() => {
+                      setRightPanelOpen((open) => {
+                        const next = !open;
+                        if (next) setLeftPanelOpen(false);
+                        return next;
+                      });
+                    }}
+                  >
+                    Data
+                  </button>
+                )}
+              </div>
+            )}
             {aeronetError && (
               <div className="aeronet-error-bar" role="alert">
                 AERONET API Error: {aeronetError}
@@ -1268,7 +1433,13 @@ const DashboardPage = () => {
                 <p className="map-loading-text map-loading-text--small">Loading fire…</p>
               </div>
             )}
-            {showMERRA2PM25 && merra2Loading && merra2Stations.length === 0 && (
+            {showMERRA2PM25 && merra2ShowGridOverlay && merra2GridLoading && (
+              <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
+                <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text map-loading-text--small">Loading CNN PM2.5 grid…</p>
+              </div>
+            )}
+            {showMERRA2PM25 && merra2ShowStations && merra2Loading && merra2Stations.length === 0 && (
               <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
                 <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
                 <p className="map-loading-text map-loading-text--small">Loading MERRA2 stations…</p>
@@ -1283,6 +1454,15 @@ const DashboardPage = () => {
                 showAeronet={showAeronet}
                 showVIIRSImagery={showVIIRSImagery}
                 showMERRA2PM25={showMERRA2PM25}
+                showMerra2Stations={showMERRA2PM25 && merra2ShowStations}
+                showMerra2GridOverlay={merra2ShowGridOverlay}
+                merra2GridDate={merra2RequestedDate}
+                onMerra2GridLoadingChange={setMerra2GridLoading}
+                onMerra2GridSourceChange={(source, reason) => {
+                  setMerra2GridSource(source);
+                  setMerra2GridFallbackReason(reason ?? null);
+                }}
+                merra2GridSource={merra2GridSource}
                 showAAQEForecast={showAAQEForecast}
                 selectedDate={selectedDateForMap}
                 onFireClick={handleFireClick}
@@ -1561,7 +1741,7 @@ const DashboardPage = () => {
             )}
           </main>
 
-          {!rightPanelOpen && showRightPanel && (
+          {!rightPanelOpen && showRightPanel && !isCompactLayout && (
             <button
               type="button"
               className="panel-reopen-btn"
@@ -1572,7 +1752,9 @@ const DashboardPage = () => {
             </button>
           )}
           {rightPanelOpen && showRightPanel && (
-            <aside className="dashboard-sidebar-right">
+            <aside
+              className={`dashboard-sidebar-right${isCompactLayout ? ' dashboard-sidebar-drawer dashboard-sidebar-drawer--right is-open' : ''}`}
+            >
               <div className="selected-data-panel">
                 <div className="selected-data-header-row">
                   <h5>
@@ -1684,6 +1866,8 @@ const DashboardPage = () => {
                   <Merra2SelectedPanel
                     station={activeSelectedMerra2Station}
                     aqi={selectedMerra2Aqi}
+                    dataDate={merra2PanelDataDate}
+                    metricsLoading={merra2PanelMetricsLoading}
                   />
                 ) : activeSelectedAAQE ? (
                   <AaqeSelectedPanel data={activeSelectedAAQE} threeDayRows={aaqeThreeDayRows} />

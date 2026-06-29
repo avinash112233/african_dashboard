@@ -56,6 +56,22 @@ export function pm25ToCssRgb(
   return `rgb(${r},${g},${b})`;
 }
 
+/** CSS linear-gradient string (left = low, right = high) for horizontal colorbar */
+export function pm25LegendGradientHorizontal(
+  vmin: number = PM25_COLORBAR_MIN,
+  vmax: number = PM25_COLORBAR_MAX
+): string {
+  const steps = 12;
+  const parts: string[] = [];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const v = vmin + t * (vmax - vmin);
+    const pct = (t * 100).toFixed(1);
+    parts.push(`${pm25ToCssRgb(v, vmin, vmax)} ${pct}%`);
+  }
+  return `linear-gradient(to right, ${parts.join(', ')})`;
+}
+
 /** CSS linear-gradient string (bottom = low, top = high) for vertical colorbar */
 export function pm25LegendGradientCss(
   vmin: number = PM25_COLORBAR_MIN,
@@ -156,4 +172,45 @@ export function samplePm25AtLatLon(
   const v = grid.values[cr * grid.width + cc];
   if (v === grid.noDataValue || v == null || Number.isNaN(v)) return null;
   return v;
+}
+
+/** Paint the full grid once to a PNG data URL for Leaflet ImageOverlay (much faster than per-tile GridLayer). */
+export function renderPm25GridToDataUrl(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  vmin: number = PM25_COLORBAR_MIN,
+  vmax: number = PM25_COLORBAR_MAX
+): string {
+  const { width, height, values, noDataValue } = grid;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  const img = ctx.createImageData(width, height);
+  const pixels = img.data;
+
+  for (let row = 0; row < height; row++) {
+    for (let col = 0; col < width; col++) {
+      const v = values[row * width + col];
+      const i = (row * width + col) * 4;
+      if (v == null || v === noDataValue || Number.isNaN(v)) {
+        pixels[i + 3] = 0;
+        continue;
+      }
+      const [r, g, b] = pm25ToRgb(v, vmin, vmax);
+      pixels[i] = r;
+      pixels[i + 1] = g;
+      pixels[i + 2] = b;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
 }

@@ -2,4 +2,11 @@
   min-height: 100vh;
   background-color: #f8f9fa;
   --navbar-height: 60px;
+  overflow-x: hidden;
+}
+
+@media (max-width: 991px) {
+  .App {
+    --navbar-height: 56px;
+  }
 }

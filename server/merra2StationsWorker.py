@@ -28,6 +28,12 @@ def validate_date(value: str, field_name: str) -> str:
     return value
 
 
+def round_pm25(value) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    return round(float(value), 2)
+
+
 def parquet_dir() -> Path:
     p = os.environ.get("MERRA2_PARQUET_DIR", "").strip()
     if not p:
@@ -99,13 +105,35 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out[out["sitename"] != ""]
 
 
+def read_parquet_for_range(p: Path, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
+    """Read only rows in [start_ts, end_ts) — much faster than loading a full year."""
+    schema = pq.read_schema(p)
+    lower_map = {c.lower(): c for c in schema.names}
+    dt_col = lower_map.get("datetime") or lower_map.get("date_time")
+    if dt_col:
+        try:
+            raw = pd.read_parquet(
+                p,
+                filters=[
+                    (dt_col, ">=", start_ts),
+                    (dt_col, "<", end_ts),
+                ],
+            )
+            if not raw.empty:
+                out = normalize_columns(raw)
+                return out[(out["datetime"] >= start_ts) & (out["datetime"] < end_ts)]
+        except Exception:
+            pass
+    df = normalize_columns(pd.read_parquet(p))
+    return df[(df["datetime"] >= start_ts) & (df["datetime"] < end_ts)]
+
+
 def cmd_stations(date_str: str):
     validate_date(date_str, "date")
     year = int(date_str[:4])
-    df = normalize_columns(pd.read_parquet(year_file(year)))
     start = pd.Timestamp(f"{date_str}T00:00:00Z")
     end = start + pd.Timedelta(days=1)
-    df = df[(df["datetime"] >= start) & (df["datetime"] < end)]
+    df = read_parquet_for_range(year_file(year), start, end)
     if df.empty:
         fail(6, f"No station data found for date {date_str}.")
 
@@ -123,10 +151,12 @@ def cmd_stations(date_str: str):
     )
     if grouped.empty:
         fail(6, f"No station data found for date {date_str}.")
-    grouped["pm25"] = grouped["pm25"].round(2)
     grouped["date"] = date_str
     grouped["datetime"] = grouped["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    print(json.dumps({"date": date_str, "stations": grouped.sort_values("sitename").to_dict(orient="records")}))
+    records = grouped.sort_values("sitename").to_dict(orient="records")
+    for rec in records:
+        rec["pm25"] = round_pm25(rec.get("pm25"))
+    print(json.dumps({"date": date_str, "stations": records}))
 
 
 def cmd_timeseries(sitename: str, start: str, end: str):
@@ -148,9 +178,8 @@ def cmd_timeseries(sitename: str, start: str, end: str):
             p = year_file(year)
         except SystemExit:
             continue  # skip years with no parquet file
-        df = normalize_columns(pd.read_parquet(p))
+        df = read_parquet_for_range(p, start_ts, end_ts)
         df = df[df["sitename"].str.lower() == station_lower]
-        df = df[(df["datetime"] >= start_ts) & (df["datetime"] < end_ts)]
         if df.empty:
             continue
         if meta is None:
@@ -170,9 +199,10 @@ def cmd_timeseries(sitename: str, start: str, end: str):
             .groupby("date", as_index=False)
             .agg(pm25=("pm25", "mean"), datetime=("datetime", "max"))
         )
-        daily["pm25"] = daily["pm25"].round(2)
         daily["datetime"] = daily["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        rows.extend(daily.to_dict(orient="records"))
+        for rec in daily.to_dict(orient="records"):
+            rec["pm25"] = round_pm25(rec.get("pm25"))
+            rows.append(rec)
 
     rows = sorted(rows, key=lambda r: r["date"])
     if not rows:

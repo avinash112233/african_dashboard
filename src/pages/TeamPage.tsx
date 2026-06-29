@@ -30,7 +30,7 @@ const TeamPage = () => {
           <Col>
             <h2 className="mb-4">Project Team</h2>
             <p className="lead mb-4">
-              Meet the researchers and scientists working on the African Aerosol Dashboard project
+              Meet the researchers and scientists working on the African Air Quality Explorer project
             </p>
           </Col>
         </Row>

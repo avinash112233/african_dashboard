@@ -6,3 +6,8 @@
   image-rendering: auto;
   pointer-events: none;
 }
+
+.leaflet-image-layer.pm25-image-overlay {
+  pointer-events: none;
+  image-rendering: auto;
+}

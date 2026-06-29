@@ -18,6 +18,21 @@ const workerScript = path.join(
   'merra2StationsWorker.py'
 );
 
+const STATIONS_CACHE_TTL_MS = 30 * 60 * 1000;
+const TIMESERIES_CACHE_TTL_MS = 30 * 60 * 1000;
+const LATEST_DATE_CACHE_TTL_MS = 60 * 60 * 1000;
+
+/** In-memory cache — avoids repeated Python subprocess + parquet reads. */
+const stationsByDateCache = new Map();
+const timeseriesCache = new Map();
+let latestDateCache = null;
+
+function getFresh(cache, key, ttlMs) {
+  const hit = cache.get(key);
+  if (!hit || Date.now() - hit.ts > ttlMs) return null;
+  return hit.data;
+}
+
 async function runWorker(args) {
   try {
     const { stdout } = await execFileAsync('python', [workerScript, ...args], {
@@ -53,12 +68,21 @@ function mapWorkerExitCodeToHttpStatus(code, message) {
 }
 
 export async function getStationsForDate(dateStr) {
+  const cached = getFresh(stationsByDateCache, dateStr, STATIONS_CACHE_TTL_MS);
+  if (cached) return cached;
+
   const out = await runWorker(['stations', '--date', dateStr]);
-  return out?.stations ?? [];
+  const stations = out?.stations ?? [];
+  stationsByDateCache.set(dateStr, { ts: Date.now(), data: stations });
+  return stations;
 }
 
 export async function getStationTimeseries({ sitename, start, end }) {
-  return runWorker([
+  const cacheKey = `${sitename}|${start}|${end}`;
+  const cached = getFresh(timeseriesCache, cacheKey, TIMESERIES_CACHE_TTL_MS);
+  if (cached) return cached;
+
+  const out = await runWorker([
     'station-timeseries',
     '--sitename',
     String(sitename ?? ''),
@@ -67,6 +91,8 @@ export async function getStationTimeseries({ sitename, start, end }) {
     '--end',
     String(end ?? ''),
   ]);
+  timeseriesCache.set(cacheKey, { ts: Date.now(), data: out });
+  return out;
 }
 
 export async function getStationList() {
@@ -75,7 +101,12 @@ export async function getStationList() {
 }
 
 export async function getLatestStationDate() {
-  return runWorker(['latest-date']);
+  if (latestDateCache && Date.now() - latestDateCache.ts <= LATEST_DATE_CACHE_TTL_MS) {
+    return latestDateCache.data;
+  }
+  const out = await runWorker(['latest-date']);
+  latestDateCache = { ts: Date.now(), data: out };
+  return out;
 }
 
 export function toHttpError(err) {

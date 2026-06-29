@@ -1,6 +1,8 @@
 import { useState, memo } from 'react';
 import { MapContainer, TileLayer, LayerGroup, LayersControl, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
 import Merra2StationsLayer from './Merra2StationsLayer';
+import PM25HeatMapLayer from './PM25HeatMapLayer';
+import Merra2Pm25GridLegend from './Merra2Pm25GridLegend';
 import L from 'leaflet';
 import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
@@ -42,6 +44,12 @@ interface MapVisualizationProps {
   showAeronet: boolean;
   showVIIRSImagery?: boolean;
   showMERRA2PM25?: boolean;
+  showMerra2Stations?: boolean;
+  showMerra2GridOverlay?: boolean;
+  merra2GridDate?: string;
+  onMerra2GridLoadingChange?: (loading: boolean) => void;
+  onMerra2GridSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
+  merra2GridSource?: 'gesdisc' | 'sample' | null;
   showAAQEForecast?: boolean;
   onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
@@ -75,6 +83,12 @@ const MapVisualization = ({
   showAeronet,
   showVIIRSImagery = false,
   showMERRA2PM25 = false,
+  showMerra2Stations = true,
+  showMerra2GridOverlay = false,
+  merra2GridDate,
+  onMerra2GridLoadingChange,
+  onMerra2GridSourceChange,
+  merra2GridSource = null,
   showAAQEForecast = false,
   onPm25Sample,
   onFireClick,
@@ -156,7 +170,17 @@ const MapVisualization = ({
         />
       )}
 
-      {showMERRA2PM25 && (
+      {showMERRA2PM25 && showMerra2GridOverlay && (
+        <PM25HeatMapLayer
+          date={merra2GridDate ?? selectedDate}
+          opacity={0.65}
+          onPm25Sample={onPm25Sample}
+          onLoadingChange={onMerra2GridLoadingChange}
+          onSourceChange={onMerra2GridSourceChange}
+        />
+      )}
+
+      {showMERRA2PM25 && showMerra2Stations && (
         <Merra2StationsLayer
           stations={merra2Stations}
           active
@@ -277,7 +301,13 @@ const MapVisualization = ({
 
       {cursorCoords && (
         <div
-          className="map-coords-bar"
+          className={`map-coords-bar${
+            (showAAQEForecast || (showMERRA2PM25 && showMerra2Stations)) &&
+            showMERRA2PM25 &&
+            showMerra2GridOverlay
+              ? ' map-coords-bar--above-legends'
+              : ''
+          }`}
           style={{
             position: 'absolute',
             bottom: 40,
@@ -294,24 +324,32 @@ const MapVisualization = ({
           Lat: {cursorCoords.lat.toFixed(4)}  Lon: {cursorCoords.lng.toFixed(4)}
         </div>
       )}
-      {(showAAQEForecast || showMERRA2PM25) && (
-        <div className="aaqe-bottom-legend" aria-label="AQI category legend">
-          <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
-            <span style={{ background: '#00e400' }}>Good</span>
-            <span style={{ background: '#ffff00' }}>Moderate</span>
-            <span style={{ background: '#ff7e00' }}>Unhealthy for sensitive groups</span>
-            <span style={{ background: '#ff0000', color: '#fff' }}>Unhealthy</span>
-            <span style={{ background: '#8f3f97', color: '#fff' }}>Very unhealthy</span>
-            <span style={{ background: '#7e0023', color: '#fff' }}>Hazardous</span>
-          </div>
-          <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--ranges">
-            <span>0-50</span>
-            <span>51-100</span>
-            <span>101-150</span>
-            <span>151-200</span>
-            <span>201-300</span>
-            <span>301+</span>
-          </div>
+      {((showAAQEForecast || (showMERRA2PM25 && showMerra2Stations)) ||
+        (showMERRA2PM25 && showMerra2GridOverlay)) && (
+        <div className="map-legends-stack">
+          {(showAAQEForecast || (showMERRA2PM25 && showMerra2Stations)) && (
+            <div className="aaqe-bottom-legend" aria-label="AQI category legend">
+              <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
+                <span style={{ background: '#00e400' }}>Good</span>
+                <span style={{ background: '#ffff00' }}>Moderate</span>
+                <span style={{ background: '#ff7e00' }}>Unhealthy for sensitive groups</span>
+                <span style={{ background: '#ff0000', color: '#fff' }}>Unhealthy</span>
+                <span style={{ background: '#8f3f97', color: '#fff' }}>Very unhealthy</span>
+                <span style={{ background: '#7e0023', color: '#fff' }}>Hazardous</span>
+              </div>
+              <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--ranges">
+                <span>0-50</span>
+                <span>51-100</span>
+                <span>101-150</span>
+                <span>151-200</span>
+                <span>201-300</span>
+                <span>301+</span>
+              </div>
+            </div>
+          )}
+          {showMERRA2PM25 && showMerra2GridOverlay && (
+            <Merra2Pm25GridLegend source={merra2GridSource} />
+          )}
         </div>
       )}
     </MapContainer>

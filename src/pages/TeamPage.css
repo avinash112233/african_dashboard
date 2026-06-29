@@ -42,5 +42,16 @@
   text-decoration: underline;
 }
 
+@media (max-width: 768px) {
+  .team-member-image,
+  .team-member-placeholder {
+    width: 120px;
+    height: 120px;
+  }
+
+  .team-member-placeholder {
+    font-size: 36px;
+  }
+}
 
 

@@ -13,7 +13,7 @@ const Navigation = () => {
     <Navbar expand="lg" className="navbar-custom">
       <Container fluid className="navbar-inner">
         <Navbar.Brand as={Link} to="/dashboard" className="navbar-brand-wrap">
-          <span className="navbar-brand-text">African Aerosol Dashboard</span>
+          <span className="navbar-brand-text">African Air Quality Explorer</span>
         </Navbar.Brand>
         <Navbar.Toggle aria-controls="basic-navbar-nav" className="navbar-toggle-btn" />
         <Navbar.Collapse id="basic-navbar-nav" className="navbar-collapse-wrap">

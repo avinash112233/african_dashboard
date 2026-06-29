@@ -2,18 +2,49 @@
 // Falls back to a synthetic sample grid when credentials are missing or the API is unreachable.
 // Set EARTHDATA_USERNAME + EARTHDATA_PASSWORD (or EARTHDATA_TOKEN) in .env for real data.
 
-const GLOBAL = { south: -90, west: -180, north: 90, east: 180 };
+import { getEarthdataBearerToken } from './earthdataAuth.js';
+
+/** Dashboard focus — smaller OPeNDAP subset loads ~15× faster than global. */
+export const AFRICA_BOUNDS = { south: -35, west: -25, north: 38, east: 55 };
 const GLOBAL_WIDTH = 576;  // 0.625° lon resolution
 const GLOBAL_HEIGHT = 361; // 0.5° lat resolution
+const NO_DATA = -9999;
+
+const gridCache = new Map();
+/** Bump when grid response shape/bounds logic changes (clears stale in-memory entries after deploy). */
+const GRID_CACHE_VERSION = 'africa-v1';
+
+function latToRowIndex(lat) {
+  const row = Math.round(((90 - lat) / 180) * (GLOBAL_HEIGHT - 1));
+  return Math.max(0, Math.min(GLOBAL_HEIGHT - 1, row));
+}
+
+function lonToColIndex(lon) {
+  const col = Math.round(((lon - -180) / 360) * (GLOBAL_WIDTH - 1));
+  return Math.max(0, Math.min(GLOBAL_WIDTH - 1, col));
+}
+
+function getAfricaIndices() {
+  const latMin = latToRowIndex(AFRICA_BOUNDS.north);
+  const latMax = latToRowIndex(AFRICA_BOUNDS.south);
+  const lonMin = lonToColIndex(AFRICA_BOUNDS.west);
+  const lonMax = lonToColIndex(AFRICA_BOUNDS.east);
+  return { latMin, latMax, lonMin, lonMax };
+}
 
 function sampleGrid(date, fallbackReason = 'fallback_unknown') {
-  const { south, west, north, east } = GLOBAL;
+  const { latMin, latMax, lonMin, lonMax } = getAfricaIndices();
+  const width = lonMax - lonMin + 1;
+  const height = latMax - latMin + 1;
+  const { south, west, north, east } = AFRICA_BOUNDS;
   const values = [];
-  let min = Infinity, max = -Infinity;
-  for (let row = 0; row < GLOBAL_HEIGHT; row++) {
-    const lat = north - (row / (GLOBAL_HEIGHT - 1)) * (north - south);
-    for (let col = 0; col < GLOBAL_WIDTH; col++) {
-      const lon = west + (col / (GLOBAL_WIDTH - 1)) * (east - west);
+  let min = Infinity;
+  let max = -Infinity;
+
+  for (let row = 0; row < height; row++) {
+    const lat = north - (row / Math.max(1, height - 1)) * (north - south);
+    for (let col = 0; col < width; col++) {
+      const lon = west + (col / Math.max(1, width - 1)) * (east - west);
       const tropics = Math.exp(-Math.pow(lat / 28, 2));
       const plume1 = Math.exp(-Math.pow((lon - 80) / 35, 2)) * Math.exp(-Math.pow((lat - 25) / 12, 2));
       const plume2 = Math.exp(-Math.pow((lon - 20) / 20, 2)) * Math.exp(-Math.pow((lat - 0) / 15, 2));
@@ -25,13 +56,14 @@ function sampleGrid(date, fallbackReason = 'fallback_unknown') {
       if (v > max) max = v;
     }
   }
+
   return {
     date,
     units: 'µg/m³',
-    bounds: { south, west, north, east },
-    width: GLOBAL_WIDTH,
-    height: GLOBAL_HEIGHT,
-    noDataValue: -9999,
+    bounds: { ...AFRICA_BOUNDS },
+    width,
+    height,
+    noDataValue: NO_DATA,
     min,
     max,
     values,
@@ -50,15 +82,21 @@ function parseOpendapAscii(text, width, height) {
   return values.length >= width * height ? values.slice(0, width * height) : null;
 }
 
-function getGlobalIndices() {
-  return { latMin: 0, latMax: 360, lonMin: 0, lonMax: 575 };
+async function fetchOpendapAscii(dataUrl, subset, bearerToken) {
+  const asciiUrl = `${dataUrl}.ascii?${subset}`;
+  return fetch(asciiUrl, {
+    headers: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {},
+    redirect: 'follow',
+  });
 }
 
 export async function fetchMerra2Grid(date) {
-  const username = process.env.EARTHDATA_USERNAME;
-  const password = process.env.EARTHDATA_PASSWORD;
-  const token = process.env.EARTHDATA_TOKEN;
-  const useAuth = username && password;
+  const cacheKey = `${GRID_CACHE_VERSION}:${date}`;
+  if (gridCache.has(cacheKey)) {
+    return gridCache.get(cacheKey);
+  }
+
+  let bearerToken = await getEarthdataBearerToken();
 
   const y = date.slice(0, 4);
   const m = date.slice(5, 7);
@@ -85,22 +123,18 @@ export async function fetchMerra2Grid(date) {
 
   const opendapUrl = items[0]?.umm?.RelatedUrls?.find((u) => u.Subtype === 'OPENDAP DATA')?.URL;
   const dataUrl = opendapUrl || baseUrl;
-  const { latMin, latMax, lonMin, lonMax } = getGlobalIndices();
+  const { latMin, latMax, lonMin, lonMax } = getAfricaIndices();
 
-  // Noon timestep (index 12), full global extent
+  // Noon timestep (index 12), Africa extent only
   const subset = `MERRA2_CNN_Surface_PM25[12:12][${latMin}:${latMax}][${lonMin}:${lonMax}]`;
-  const asciiUrl = `${dataUrl}.ascii?${subset}`;
-
-  const headers = {};
-  if (token) {
-    headers.Authorization = `Bearer ${String(token).trim()}`;
-  } else if (useAuth) {
-    headers.Authorization = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
-  }
 
   let res;
   try {
-    res = await fetch(asciiUrl, { headers, redirect: 'follow' });
+    res = await fetchOpendapAscii(dataUrl, subset, bearerToken);
+    if (res.status === 401 && bearerToken) {
+      bearerToken = await getEarthdataBearerToken({ forceRefresh: true });
+      if (bearerToken) res = await fetchOpendapAscii(dataUrl, subset, bearerToken);
+    }
   } catch (e) {
     console.warn('[MERRA2] OPeNDAP fetch failed:', e.message);
     return sampleGrid(date, 'opendap_network_error');
@@ -108,8 +142,13 @@ export async function fetchMerra2Grid(date) {
 
   if (!res.ok) {
     console.warn('[MERRA2] OPeNDAP returned', res.status, res.statusText);
-    if (res.status === 401 && !useAuth && !token) {
-      console.warn('[MERRA2] Set EARTHDATA_USERNAME/PASSWORD or EARTHDATA_TOKEN for real data.');
+    if (res.status === 401 && !bearerToken) {
+      console.warn('[MERRA2] Set EARTHDATA_USERNAME/PASSWORD in .env, then restart backend.');
+    } else if (res.status === 401) {
+      console.warn(
+        '[MERRA2] Earthdata token rejected. Verify username/password and enable '
+        + '"NASA GES DISC DATA ARCHIVE" + "Hyrax in the Cloud" on https://urs.earthdata.nasa.gov'
+      );
     }
     return sampleGrid(date, res.status === 401 ? 'opendap_401_unauthorized' : `opendap_http_${res.status}`);
   }
@@ -123,28 +162,31 @@ export async function fetchMerra2Grid(date) {
     return sampleGrid(date, 'opendap_parse_error');
   }
 
-  const noData = -9999;
   const outValues = [];
-  let min = Infinity, max = -Infinity;
+  let min = Infinity;
+  let max = -Infinity;
   for (const v of values) {
-    const num = typeof v === 'number' && !isNaN(v) && v !== noData ? Math.round(v * 10) / 10 : noData;
+    const num = typeof v === 'number' && !isNaN(v) && v !== NO_DATA ? Math.round(v * 10) / 10 : NO_DATA;
     outValues.push(num);
-    if (num !== noData) {
+    if (num !== NO_DATA) {
       if (num < min) min = num;
       if (num > max) max = num;
     }
   }
 
-  return {
+  const result = {
     date,
     units: 'µg/m³',
-    bounds: { ...GLOBAL },
+    bounds: { ...AFRICA_BOUNDS },
     width: nLon,
     height: nLat,
-    noDataValue: noData,
+    noDataValue: NO_DATA,
     min: min === Infinity ? 0 : min,
     max: max === -Infinity ? 50 : max,
     values: outValues,
     source: 'gesdisc',
   };
+
+  gridCache.set(cacheKey, result);
+  return result;
 }

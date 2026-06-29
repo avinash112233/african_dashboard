@@ -58,25 +58,68 @@
   font-weight: 650;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
+  .map-visualization-root {
+    min-height: 280px;
+  }
+
   .aaqe-tooltip-card {
-    min-width: 270px;
-    max-width: 360px;
+    min-width: 240px;
+    max-width: min(92vw, 360px);
     font-size: 13px;
+    padding: 10px 12px;
   }
 
   .aaqe-tooltip-summary {
-    font-size: 20px;
+    font-size: 18px;
+  }
+
+  .aaqe-bottom-legend {
+    width: min(560px, calc(100% - 20px));
+    bottom: 10px;
+  }
+
+  .aaqe-bottom-legend-row span {
+    font-size: 8px;
+    padding: 2px 2px;
   }
 }
 
-.aaqe-bottom-legend {
+@media (max-width: 640px) {
+  .aaqe-bottom-legend {
+    width: calc(100% - 16px);
+    bottom: 8px;
+  }
+
+  .aaqe-bottom-legend-row span {
+    font-size: 7px;
+    line-height: 1.15;
+  }
+}
+
+.map-legends-stack {
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  bottom: 16px;
   transform: translateX(-50%);
   z-index: 1000;
-  width: min(580px, 76%);
+  width: min(580px, 92%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.map-coords-bar--above-legends {
+  bottom: 118px !important;
+}
+
+.aaqe-bottom-legend {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
   background: #fff;
   border: 1px solid #d1d5db;
   border-radius: 8px;
@@ -110,6 +153,93 @@
   background: #fff;
   color: #111827;
   border-top: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+/* MERRA2 CNN PM2.5 grid colorbar (inside map-legends-stack) */
+.merra2-pm25-legend {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+  padding: 8px 12px 6px;
+  pointer-events: none;
+}
+
+.merra2-pm25-legend-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+
+.merra2-pm25-legend-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.merra2-pm25-legend-meta {
+  font-size: 10px;
+  color: #6b7280;
+}
+
+.merra2-pm25-legend-bar {
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.merra2-pm25-legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding: 0 1px;
+}
+
+.merra2-pm25-legend-tick {
+  font-size: 10px;
+  font-weight: 500;
+  color: #374151;
+  line-height: 1.2;
+}
+
+@media (max-width: 640px) {
+  .map-legends-stack {
+    width: calc(100% - 16px);
+    bottom: 10px;
+    gap: 6px;
+  }
+
+  .map-coords-bar--above-legends {
+    bottom: 108px !important;
+  }
+
+  .merra2-pm25-legend {
+    padding: 6px 10px 5px;
+  }
+
+  .merra2-pm25-legend-title {
+    font-size: 10px;
+  }
+
+  .merra2-pm25-legend-meta {
+    font-size: 9px;
+  }
+
+  .merra2-pm25-legend-bar {
+    height: 12px;
+  }
+
+  .merra2-pm25-legend-tick {
+    font-size: 8px;
+  }
 }
 
 /* MERRA2 canvas markers — pointer cursor on hover */

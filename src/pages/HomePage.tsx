@@ -63,7 +63,7 @@ const HomePage = () => {
         <div className="hp-hero-overlay" />
         <div className="hp-hero-content">
           <div className="hp-hero-badge">NASA · AERONET · FIRMS · MERRA-2</div>
-          <h1 className="hp-hero-title">African Aerosol<br />Quality Dashboard</h1>
+          <h1 className="hp-hero-title">African Air Quality<br />Explorer</h1>
           <p className="hp-hero-sub">
             Real-time air quality monitoring and PM2.5 forecasting across the African continent.
             Powered by satellite observations, ground-based measurements, and machine-learning models.
@@ -212,7 +212,7 @@ const HomePage = () => {
             <p className="hp-section-eyebrow">About the Project</p>
             <h2 className="hp-section-title">Built for African Air Quality Research</h2>
             <p className="hp-about-para">
-              The African Aerosol Quality Dashboard is a research platform developed at the
+              The African Air Quality Explorer is a research platform developed at the
               University of Maryland Baltimore County (UMBC) to support air quality monitoring,
               forecasting, and scientific analysis across the African continent.
             </p>
