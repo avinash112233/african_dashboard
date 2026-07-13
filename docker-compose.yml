@@ -7,13 +7,20 @@ services:
       dockerfile: Dockerfile.backend
     container_name: aqf_backend
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
       - MERRA2_PARQUET_DIR=/data/merra2
       - MERRA2_API_PORT=3001
+      - WASHU_CACHE_DIR=/data/washu-cache
+      - OPENAQ_ARCHIVE_CACHE_DIR=/data/openaq-cache
     volumes:
       # Your local Parquet folder, mounted read-only into the container
       - /home/ubuntu/AFRICAN_PM25_DATA/DATA_FOR_VISHAL:/data/merra2:ro
+      # Persist WashU NetCDF + OpenAQ archive caches across container restarts
+      - washu_cache:/data/washu-cache
+      - openaq_cache:/data/openaq-cache
     expose:
       - "3001"
     healthcheck:
@@ -38,3 +45,7 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+volumes:
+  washu_cache:
+  openaq_cache:

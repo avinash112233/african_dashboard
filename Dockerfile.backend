@@ -1,16 +1,19 @@
 # Backend — Node.js Express + Python (MERRA2 data worker)
 FROM node:20-slim
 
-# Install Python 3 + pip + make `python` resolve to python3
+# Install Python 3 + pip + NetCDF libs (MERRA2 parquet + WashU SatPM2.5 grid worker)
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
     python-is-python3 \
     gcc \
+    libhdf5-dev \
+    libnetcdf-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir pandas pyarrow --break-system-packages
+RUN pip3 install --no-cache-dir pandas pyarrow numpy netCDF4 --break-system-packages
 
 WORKDIR /app
 
