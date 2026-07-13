@@ -55,6 +55,26 @@ function toYmdCompact(date: string): string {
   return date.replaceAll('-', '');
 }
 
+/** Normalize AAQE UTC_DATE (ISO, YYYYMMDD string, or numeric) to YYYY-MM-DD. */
+export function normalizeAaqeUtcDate(value: string | number | undefined): string | null {
+  if (value == null || value === '') return null;
+  const v = String(value).trim();
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  if (/^\d{8}$/.test(v)) return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+  const d = dayjs(v.slice(0, 10), 'YYYY-MM-DD', true);
+  return d.isValid() ? d.format('YYYY-MM-DD') : null;
+}
+
+export function filterAaqePointsByUtcDate(
+  points: AAQEForecastPoint[],
+  targetIso: string
+): AAQEForecastPoint[] {
+  return points.filter(
+    (p) => normalizeAaqeUtcDate(p.properties.UTC_DATE) === targetIso
+  );
+}
+
 const PROBE_TIMEOUT_MS = 8000;
 
 // Module-level caches — repeated calls for the same dates are instant.

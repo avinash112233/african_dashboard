@@ -38,3 +38,6 @@ setup-env.sh
 *.njsproj
 *.sln
 *.sw?
+
+# Downloaded SatPM2.5 NetCDF cache
+.cache/

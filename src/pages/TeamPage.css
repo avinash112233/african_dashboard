@@ -3,6 +3,12 @@
   background-color: #f5f5f5;
 }
 
+.team-section-heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
 .team-member-card {
   transition: transform 0.2s, box-shadow 0.2s;
 }
@@ -53,5 +59,3 @@
     font-size: 36px;
   }
 }
-
-

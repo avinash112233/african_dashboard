@@ -111,7 +111,7 @@
 }
 
 .map-coords-bar--above-legends {
-  bottom: 118px !important;
+  bottom: 138px !important;
 }
 
 .aaqe-bottom-legend {
@@ -155,6 +155,23 @@
   border-top: 1px solid rgba(15, 23, 42, 0.12);
 }
 
+/* AERONET AOD — same two-row chip layout as the AQI legend */
+.aeronet-aod-legend-row {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.aeronet-aod-bottom-legend .aaqe-bottom-legend-row--labels span {
+  font-size: 9px;
+  padding: 4px 3px;
+}
+
+@media (max-width: 640px) {
+  .aeronet-aod-bottom-legend .aaqe-bottom-legend-row--labels span {
+    font-size: 7px;
+    line-height: 1.15;
+  }
+}
+
 /* MERRA2 CNN PM2.5 grid colorbar (inside map-legends-stack) */
 .merra2-pm25-legend {
   position: relative;
@@ -190,10 +207,67 @@
   color: #6b7280;
 }
 
+.merra2-pm25-legend-bar-wrap {
+  position: relative;
+  margin-top: 2px;
+}
+
 .merra2-pm25-legend-bar {
-  height: 14px;
+  position: relative;
+  height: 16px;
   border-radius: 4px;
   border: 1px solid rgba(15, 23, 42, 0.15);
+  overflow: visible;
+}
+
+.merra2-pm25-legend-indicator {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #111827;
+  border-radius: 1px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.95),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.merra2-pm25-legend-value-tag {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #111827;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.merra2-pm25-legend-value-tag::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: #111827;
+}
+
+.merra2-pm25-legend-hint {
+  margin: 6px 0 0;
+  font-size: 9px;
+  color: #6b7280;
+  text-align: center;
+  line-height: 1.2;
 }
 
 .merra2-pm25-legend-ticks {
@@ -218,7 +292,7 @@
   }
 
   .map-coords-bar--above-legends {
-    bottom: 108px !important;
+    bottom: 128px !important;
   }
 
   .merra2-pm25-legend {
@@ -247,7 +321,11 @@
   cursor: pointer !important;
 }
 
-.merra2-station-tooltip {
+.leaflet-pane path.openaq-station-marker {
+  cursor: pointer !important;
+}
+
+.openaq-station-tooltip {
   pointer-events: none;
 }
 

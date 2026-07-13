@@ -40,8 +40,26 @@ type CacheEntry<T> = { data: T; ts: number };
 const CACHE_TTL_MS        = 30 * 60 * 1000;
 const CACHE_SITES_TTL_MS  = 24 * 60 * 60 * 1000;
 const CACHE_AFRICA_TTL_MS = 30 * 60 * 1000;
-const LS_SITES_KEY   = 'aqf_aeronet_sites_v1';
+const LS_SITES_KEY   = 'aqf_aeronet_sites_v2';
 const LS_AFRICA_KEY  = 'aqf_aeronet_africa_v1';
+
+/** NASA extended list is intermittently empty (header only); v3 list is reliable. */
+const AERONET_SITE_LIST_URLS = [
+  `${API_BASE}/aeronet_locations_v3.txt`,
+  `${API_BASE}/aeronet_locations_extended_v3.txt`,
+];
+
+const AFRICA_BBOX = { south: -37, west: -18, north: 37, east: 52 };
+
+function filterAfricanSites(sites: AERONETSite[]): AERONETSite[] {
+  return sites.filter(
+    (s) =>
+      s.latitude >= AFRICA_BBOX.south &&
+      s.latitude <= AFRICA_BBOX.north &&
+      s.longitude >= AFRICA_BBOX.west &&
+      s.longitude <= AFRICA_BBOX.east
+  );
+}
 
 const cacheSites    = { entry: null as CacheEntry<AERONETSite[]> | null };
 const cacheAfrica   = new Map<string, CacheEntry<SiteAODMap>>();
@@ -71,6 +89,16 @@ function lsWrite<T>(key: string, data: T): void {
   } catch { /* quota exceeded */ }
 }
 
+async function fetchWithTimeout(url: string, ms = 10_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Parses aeronet_locations_extended_v3.txt (tab- or comma-separated, flexible headers).
 function parseLocationsText(text: string): AERONETSite[] {
   const sites: AERONETSite[] = [];
@@ -85,8 +113,14 @@ function parseLocationsText(text: string): AERONETSite[] {
     const cols = lines[h].split(sep).map((c) => c.trim().toLowerCase());
     const li = cols.findIndex((c) => c.includes('lat') || c === 'latitude');
     const lo = cols.findIndex((c) => c.includes('lon') || c === 'longitude');
-    const si = cols.findIndex((c) => c.includes('new_site') || (c === 'site') || (c.includes('site') && !c.includes('datetime')));
-    const ni = cols.findIndex((c) => c === 'name');
+    const si = cols.findIndex(
+      (c) =>
+        c === 'site_name' ||
+        c.includes('new_site') ||
+        c === 'site' ||
+        (c.includes('site') && !c.includes('datetime') && !c.includes('site_list'))
+    );
+    const ni = cols.findIndex((c) => c === 'name' || c === 'site_name');
     const ei = cols.findIndex((c) => c.includes('elev') || c.includes('alt'));
     if (li >= 0 && lo >= 0 && (si >= 0 || ni >= 0)) {
       headerLineIdx = h; latIdx = li; lonIdx = lo;
@@ -111,14 +145,30 @@ function parseLocationsText(text: string): AERONETSite[] {
 }
 
 async function fetchAndCacheSites(): Promise<AERONETSite[]> {
-  const res = await fetch(`${API_BASE}/aeronet_locations_extended_v3.txt`);
-  if (!res.ok) throw new Error(`AERONET API ${res.status}`);
-  const all = parseLocationsText(await res.text());
-  // Africa bounding box filter
-  const sites = all.filter((s) => s.latitude >= -37 && s.latitude <= 37 && s.longitude >= -18 && s.longitude <= 52);
-  cacheSites.entry = { data: sites, ts: Date.now() };
-  lsWrite(LS_SITES_KEY, sites);
-  return sites;
+  let lastError: Error | null = null;
+
+  for (const url of AERONET_SITE_LIST_URLS) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        lastError = new Error(`AERONET API ${res.status} for ${url}`);
+        continue;
+      }
+      const all = parseLocationsText(await res.text());
+      const sites = filterAfricanSites(all);
+      if (sites.length === 0) {
+        lastError = new Error(`AERONET site list empty from ${url}`);
+        continue;
+      }
+      cacheSites.entry = { data: sites, ts: Date.now() };
+      lsWrite(LS_SITES_KEY, sites);
+      return sites;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError ?? new Error('AERONET site list unavailable');
 }
 
 /**
@@ -129,13 +179,13 @@ async function fetchAndCacheSites(): Promise<AERONETSite[]> {
 export async function getAfricanAERONETSites(): Promise<AERONETSite[]> {
   const now = Date.now();
 
-  if (cacheSites.entry && now - cacheSites.entry.ts < CACHE_SITES_TTL_MS) {
+  if (cacheSites.entry && now - cacheSites.entry.ts < CACHE_SITES_TTL_MS && cacheSites.entry.data.length > 0) {
     return cacheSites.entry.data;
   }
 
   // Return localStorage data immediately; trigger a background refresh if stale.
   const lsCached = lsRead<AERONETSite[]>(LS_SITES_KEY, CACHE_SITES_TTL_MS * 3);
-  if (lsCached) {
+  if (lsCached && lsCached.length > 0) {
     cacheSites.entry = { data: lsCached, ts: now };
     const lsEntry = (() => { try { return JSON.parse(localStorage.getItem(LS_SITES_KEY) ?? '{}'); } catch { return {}; } })();
     if (now - (lsEntry.ts ?? 0) > CACHE_SITES_TTL_MS) {
@@ -150,8 +200,8 @@ export async function getAfricanAERONETSites(): Promise<AERONETSite[]> {
     console.error('[AERONET] NASA unreachable:', err);
     // Emergency: serve any stale localStorage data rather than returning empty.
     const stale = lsRead<AERONETSite[]>(LS_SITES_KEY, Infinity);
-    if (stale) { cacheSites.entry = { data: stale, ts: now }; return stale; }
-    return cacheSites.entry?.data ?? [];
+    if (stale && stale.length > 0) { cacheSites.entry = { data: stale, ts: now }; return stale; }
+    return cacheSites.entry?.data?.length ? cacheSites.entry.data : [];
   }
 }
 
@@ -177,7 +227,7 @@ export async function getAERONETData(
       AVG: '20',
       if_no_html: '1',
     });
-    const res = await fetch(`${API_BASE}/cgi-bin/print_web_data_v3?${params}`);
+    const res = await fetchWithTimeout(`${API_BASE}/cgi-bin/print_web_data_v3?${params}`, 10_000);
     if (!res.ok) return [];
     const text = await res.text();
     const lines = text.split('\n').filter((l) => l.trim());
@@ -224,8 +274,6 @@ export async function getAERONETData(
     return [];
   }
 }
-
-const AFRICA_BBOX = { south: -37, west: -18, north: 37, east: 52 };
 
 /**
  * AOD data for all African sites in a date range — used to color-code map markers.

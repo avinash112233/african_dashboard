@@ -1,0 +1,2289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AAQE Organized Dynamic Dashboard Prototype - Custom Quantitative Colorbar</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+  <style>
+    :root{
+      --ink:#112236;
+      --muted:#65758a;
+      --bg:#eef4f8;
+      --panel:#ffffff;
+      --line:#d8e5ee;
+      --navy:#07182d;
+      --blue:#0f68a9;
+      --cyan:#19a8c9;
+      --green:#2ea36b;
+      --amber:#f2b735;
+      --orange:#ed7d31;
+      --red:#d84c4c;
+      --purple:#7644b7;
+      --shadow:0 14px 34px rgba(8, 33, 57, .13);
+      --shadow-soft:0 8px 18px rgba(8, 33, 57, .09);
+      --radius:20px;
+    }
+    *{box-sizing:border-box}
+    html,body{max-width:100%;overflow-x:hidden}
+    body{
+      margin:0;
+      color:var(--ink);
+      background:linear-gradient(180deg,#e7f4fa 0%,#f6f9fc 42%,#eef3f7 100%);
+      font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .hero-header{
+      position:sticky;
+      top:0;
+      z-index:1060;
+      background:linear-gradient(135deg,#061629 0%,#0b345c 50%,#0a768d 100%);
+      color:#fff;
+      box-shadow:0 12px 38px rgba(5, 21, 41, .25);
+      border-bottom:1px solid rgba(255,255,255,.14);
+    }
+    .brand-lockup{display:flex;align-items:center;gap:14px}
+    .brand-icon{
+      width:47px;height:47px;border-radius:16px;
+      display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(145deg,#4bd0ff,#2ea36b);
+      color:#05213b;font-weight:950;font-size:20px;
+      box-shadow:0 8px 22px rgba(75,208,255,.34)
+    }
+    .brand-title{font-size:21px;font-weight:900;line-height:1.08;margin:0}
+    .brand-subtitle{font-size:12px;color:#d8eef7;margin-top:4px}
+    .disclaimer-pill{
+      display:inline-flex;gap:7px;align-items:center;
+      font-size:12px;font-weight:800;
+      background:rgba(255,255,255,.12);
+      color:#ecfbff;border:1px solid rgba(255,255,255,.20);
+      padding:7px 11px;border-radius:999px;
+    }
+    .section-wrap{padding:18px 22px 34px}
+    .panel-card,.map-card,.metric-card,.plot-card{
+      background:rgba(255,255,255,.94);
+      border:1px solid rgba(196,214,225,.88);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow-soft);
+      backdrop-filter:blur(12px);
+    }
+    .panel-card{padding:16px;margin-bottom:14px}
+    .common-panel{box-shadow:var(--shadow);padding:17px;margin-bottom:16px}
+    .panel-title{font-size:12px;text-transform:uppercase;letter-spacing:.085em;color:#607080;font-weight:900;margin-bottom:12px}
+    .panel-title .bi{font-size:14px;margin-right:6px;color:#0f68a9}
+    label.form-label{font-size:12px;font-weight:800;color:#4d5d6e;margin-bottom:5px}
+    .form-select,.form-control{
+      border-color:#d4e1e8;border-radius:13px;font-size:13px;min-height:39px;background:#fbfdff;
+    }
+    .form-select:focus,.form-control:focus{box-shadow:0 0 0 .22rem rgba(15,104,169,.12);border-color:#62a6cf}
+    .select2-container .select2-selection--single{
+      height:39px;border:1px solid #d4e1e8;border-radius:13px;background:#fbfdff;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__rendered{line-height:38px;font-size:13px;color:#25364a;padding-left:12px}
+    .select2-container--default .select2-selection--single .select2-selection__arrow{height:37px;right:8px}
+    .mini-note{font-size:11px;color:#748294;line-height:1.38}
+    .help-text{font-size:12px;color:#607385;line-height:1.4}
+    .section-chip{display:inline-flex;align-items:center;gap:6px;background:#eef8fc;color:#14506c;border:1px solid #d9edf5;border-radius:999px;padding:6px 9px;font-weight:800;font-size:11px;margin:2px}
+    .analysis-tabs{display:flex;gap:8px;flex-wrap:wrap}
+    .analysis-btn{
+      border:1px solid #cfe2ea;background:#fff;color:#25546b;border-radius:15px;
+      font-size:13px;font-weight:850;padding:10px 12px;display:flex;align-items:center;gap:7px;
+      transition:.16s ease;
+    }
+    .analysis-btn.active{background:linear-gradient(135deg,#0f68a9,#19a8c9);color:#fff;border-color:transparent;box-shadow:0 8px 18px rgba(15,104,169,.24)}
+    .analysis-btn:hover{transform:translateY(-1px)}
+    .side-stack{position:sticky;top:94px;z-index:20}
+    .map-card{padding:0;overflow:hidden;box-shadow:var(--shadow);position:relative}
+    #africaMap{height:630px;width:100%;background:#d8eef7}
+    .map-toolbar{
+      position:absolute;top:14px;left:14px;z-index:800;width:min(380px,calc(100% - 28px));
+      background:rgba(255,255,255,.94);border:1px solid rgba(213,227,234,.95);
+      border-radius:20px;padding:14px;box-shadow:0 12px 32px rgba(8,34,57,.18);backdrop-filter:blur(10px)
+    }
+    .map-legend{
+      position:absolute;bottom:18px;left:18px;z-index:800;
+      background:rgba(255,255,255,.94);border:1px solid rgba(213,227,234,.95);
+      border-radius:17px;padding:12px 14px;box-shadow:0 12px 32px rgba(8,34,57,.14);min-width:300px
+    }
+    .legend-ramp{height:20px;border-radius:999px;margin:10px 0 6px;background:linear-gradient(90deg,#00007f,#0000ff,#007fff,#00ffff,#7fff7f,#ffff00,#ffb000,#ff3b00,#7f0000);box-shadow:inset 0 0 0 1px rgba(16,32,51,.25),0 1px 7px rgba(16,32,51,.12)}
+    .legend-labels{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;font-size:9.5px;color:#26384b;font-weight:900}
+    .legend-labels span{text-align:center;line-height:1.12;min-width:0}
+    .legend-labels small{display:block;color:#667789;font-weight:750;font-size:9px;margin-top:2px}
+    .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:13px;margin-bottom:16px}
+    .metric-card{padding:15px;min-height:112px;position:relative;overflow:hidden;background:linear-gradient(180deg,#fff,#f8fbfd)}
+    .metric-card:after{content:"";position:absolute;right:-28px;top:-28px;width:95px;height:95px;border-radius:50%;background:rgba(25,168,201,.10)}
+    .metric-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6e7f91;font-weight:900;position:relative;z-index:2}
+    .metric-value{font-size:28px;font-weight:950;color:#112b43;margin-top:8px;position:relative;z-index:2}
+    .metric-unit{font-size:12px;color:#6d7e8e;font-weight:800;margin-left:4px}
+    .metric-caption{font-size:11px;color:#6e7f91;line-height:1.35;margin-top:5px;position:relative;z-index:2}
+    .aq-index{height:8px;border-radius:99px;background:#e3edf2;overflow:hidden;margin-top:9px}.aq-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#2ea36b,#f2b735,#ed7d31,#d84c4c,#7644b7)}
+    .status-dot{display:inline-block;width:9px;height:9px;border-radius:99px;margin-right:5px;background:var(--green)}
+    .plot-card{padding:16px;margin-bottom:16px;width:100%;overflow:hidden}
+    .plot-frame{height:470px;width:100%;max-width:100%}
+    .plot-frame-tall{height:520px;width:100%;max-width:100%}
+    .plot-stack{display:flex;flex-direction:column;gap:0;width:100%;max-width:100%}
+    .btn-aaqe{border-radius:13px;font-weight:850;font-size:13px;padding:9px 12px;background:linear-gradient(135deg,#0f68a9,#19a8c9);border:0;color:#fff;box-shadow:0 9px 20px rgba(15,104,169,.22)}
+    .btn-aaqe:hover{color:#fff;filter:brightness(.97)}
+    .btn-outline-aaqe{border-radius:13px;font-weight:850;font-size:13px;border:1px solid #cfe2ea;color:#25546b;background:#fff;padding:8px 11px}
+    .btn-outline-aaqe:hover{background:#f0f8fb;color:#13384e;border-color:#abd0dd}
+    .toggle-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px}
+    .form-check-label{font-size:12px;color:#4e6174;font-weight:800}
+    .form-check-input:checked{background-color:#0f68a9;border-color:#0f68a9}
+    .source-row{display:grid;grid-template-columns:145px 1fr 110px;gap:10px;align-items:start;padding:12px;border-bottom:1px solid #e6eef3}
+    .source-row:last-child{border-bottom:0}
+    .source-name{font-weight:900;color:#17364d}
+    .source-desc{font-size:12px;color:#5f7182;line-height:1.35}
+    .source-meta{font-size:11px;color:#708292;font-weight:800}
+    .accordion-button{font-size:13px;font-weight:900;color:#17364d}
+    .accordion-button:not(.collapsed){background:#eef8fc;color:#0e5b82;box-shadow:none}
+    .accordion-body{font-size:12px;color:#5b6d7f;line-height:1.45}
+    .data-table{font-size:12px;vertical-align:middle}
+    .data-table th{color:#496073;background:#f3f8fb;font-weight:900;border-bottom:1px solid #dfeaf0}
+    .leaflet-popup-content-wrapper{border-radius:15px;box-shadow:0 10px 28px rgba(0,0,0,.22)}
+    .event-label{background:rgba(16,32,51,.90);color:#fff;border:0;border-radius:12px;padding:5px 8px;font-weight:900;font-size:11px;box-shadow:0 8px 20px rgba(0,0,0,.22)}
+    .floating-toast{position:fixed;right:20px;bottom:20px;z-index:2000;background:#102033;color:#fff;border-radius:16px;padding:12px 14px;box-shadow:0 16px 40px rgba(0,0,0,.22);display:none;max-width:360px;font-size:13px}
+    .hidden-by-category{display:none!important}
+    .aaqe-heat-raster{mix-blend-mode:multiply;}
+    .product-context-banner{
+      display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+      background:linear-gradient(135deg,#ffffff,#f1f9fc);border:1px solid #d8e8f0;border-radius:18px;padding:14px;margin-bottom:15px
+    }
+    .product-context-banner h2{font-size:20px;font-weight:950;margin:0;color:#183a54}
+    .product-context-banner p{font-size:12px;color:#6a7b8c;line-height:1.4;margin:4px 0 0}
+    .map-cell-hover{outline:2px solid rgba(255,255,255,.7)}
+    @media (max-width:1199px){
+      .side-stack{position:relative;top:0}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.section-wrap{padding:15px}.source-row{grid-template-columns:1fr}.map-legend{left:50%;right:auto;max-width:calc(100% - 24px);width:360px;min-width:0}.plot-frame,.plot-frame-tall{height:430px}
+    }
+    @media (max-width:767px){
+      .metric-grid{grid-template-columns:1fr}.brand-title{font-size:17px}.analysis-btn{width:100%;justify-content:center}.toggle-grid{grid-template-columns:1fr}.plot-frame,.plot-frame-tall{height:390px}#africaMap{height:540px}.map-toolbar{position:relative;top:auto;left:auto;width:100%;border-radius:0;box-shadow:none}.map-legend{bottom:12px;max-width:calc(100% - 24px);width:340px}
+    }
+  
+    /* Compact quantitative color bar on map. PM2.5 categories are shown as a text reference only. */
+    .map-legend{left:50% !important;right:auto !important;transform:translateX(-50%);bottom:16px !important;width:380px;max-width:44%;min-width:310px;padding:10px 12px !important}
+    .map-legend.floating-map-panel{transform:none !important}
+    .legend-ramp{height:16px !important;margin:8px 0 5px !important;background:linear-gradient(90deg,#30123b,#4145ab,#2b91d1,#23c7aa,#7ad151,#fde725,#fca636,#e6502e,#7a0403) !important}
+    .legend-labels{display:grid !important;grid-template-columns:repeat(5,minmax(0,1fr)) !important;gap:3px;font-size:9.5px;color:#26384b;font-weight:900}
+    .pm-reference{margin-top:7px;padding-top:7px;border-top:1px solid #e4edf2;font-size:9.5px;line-height:1.25;color:#57697c}
+    .pm-reference strong{color:#20384d}
+    .colorbar-custom-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .colorbar-settings .form-select,.colorbar-settings .form-control{min-height:34px;font-size:12px;border-radius:11px}
+    .colorbar-settings label.form-label{font-size:11px}
+
+    .floating-map-panel{
+      resize:both;
+      overflow:auto;
+      min-width:260px;
+      min-height:120px;
+      max-width:calc(100% - 24px);
+      max-height:calc(100% - 24px);
+      touch-action:none;
+    }
+    .floating-map-panel .drag-handle{
+      cursor:move;
+      user-select:none;
+      border-radius:12px;
+      padding:3px 2px;
+    }
+    .floating-map-panel .drag-handle:hover{background:rgba(15,104,169,.08)}
+    .map-panel-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .map-panel-actions .btn{font-size:11px;padding:5px 8px;border-radius:10px}
+    .selection-info{
+      font-size:11px;color:#4f6174;background:#f6fbfd;border:1px solid #dcebf1;border-radius:12px;padding:7px 8px;line-height:1.35;margin-top:7px
+    }
+    .selection-info strong{color:#17364d}
+    .map-point-marker{
+      width:18px;height:18px;border-radius:50%;background:#ffffff;border:3px solid #111827;box-shadow:0 0 0 4px rgba(255,255,255,.45),0 8px 20px rgba(0,0,0,.35)
+    }
+    .panel-resize-note{font-size:10px;color:#7a8795;margin-top:5px;text-align:right}
+
+    @media (max-width:1199px){.map-legend{max-width:calc(100% - 24px) !important;width:360px;min-width:0}}
+    @media (max-width:767px){.map-legend{max-width:calc(100% - 24px) !important;width:340px;min-width:0}}
+
+  
+    /* Top navigation and content pages */
+    .top-page-nav{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+    .top-page-btn{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.11);color:#eefbff;border-radius:999px;padding:8px 13px;font-size:13px;font-weight:900;letter-spacing:.01em;display:inline-flex;align-items:center;gap:7px;transition:.16s ease}
+    .top-page-btn:hover{background:rgba(255,255,255,.20);color:#fff;transform:translateY(-1px)}
+    .top-page-btn.active{background:#fff;color:#0b345c;border-color:#fff;box-shadow:0 8px 18px rgba(255,255,255,.18)}
+    .app-page{display:none}
+    .app-page.active-page{display:block}
+    .content-page{padding:24px 26px 42px;max-width:1220px;margin:0 auto}
+    .content-hero{background:rgba(255,255,255,.96);border:1px solid rgba(196,214,225,.88);border-radius:24px;box-shadow:var(--shadow);padding:26px 30px;margin-bottom:18px}
+    .content-hero h1{font-size:34px;line-height:1.08;font-weight:950;color:#102033;margin:0 0 8px;letter-spacing:-.03em}
+    .content-hero p{font-size:15px;line-height:1.55;color:#526879;max-width:920px;margin:0}
+    .content-section{background:rgba(255,255,255,.96);border:1px solid rgba(196,214,225,.88);border-radius:22px;box-shadow:var(--shadow-soft);padding:22px;margin-bottom:18px}
+    .content-heading-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid #e1ebf1;padding-bottom:11px;margin-bottom:17px}
+    .content-heading-row h2{font-size:22px;font-weight:950;color:#12324b;margin:0;letter-spacing:-.01em}
+    .content-heading-row span{font-size:12px;font-weight:900;color:#0f68a9;background:#eef8fc;border:1px solid #d5eaf3;border-radius:999px;padding:6px 10px}
+    .team-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .team-grid.collab-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .team-card{display:flex;gap:13px;align-items:flex-start;padding:15px;border:1px solid #dde9f0;border-radius:18px;background:linear-gradient(180deg,#fff,#f7fbfd)}
+    .team-avatar{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#0f68a9,#19a8c9);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:950;font-size:15px;flex:0 0 auto;box-shadow:0 8px 18px rgba(15,104,169,.22)}
+    .team-card h3{font-size:17px;font-weight:950;color:#102033;margin:0 0 5px;line-height:1.25}
+    .team-role{font-size:14px;font-weight:800;color:#314c61;line-height:1.35;margin-bottom:5px}
+    .team-affiliation{font-size:13px;color:#64798a;line-height:1.4;font-weight:700}
+    .publication-list{counter-reset:item;list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+    .publication-list li{counter-increment:item;position:relative;padding:14px 16px 14px 54px;border:1px solid #dde9f0;border-radius:16px;background:linear-gradient(180deg,#fff,#f8fbfd);font-size:14px;line-height:1.55;color:#24384a}
+    .publication-list li:before{content:"[" counter(item) "]";position:absolute;left:15px;top:15px;font-weight:950;color:#0f68a9;font-size:14px}
+    .publication-list em,.publication-list i{font-style:italic}
+    .city-compare-controls{background:#f7fbfd;border:1px solid #e0ecf2;border-radius:15px;padding:10px;margin-bottom:12px}
+    .select2-container--default .select2-selection--multiple{border:1px solid #d4e1e8;border-radius:13px;background:#fbfdff;min-height:39px;padding:3px 5px}
+    .select2-container--default .select2-selection--multiple .select2-selection__choice{background:#eaf6fb;border:1px solid #c7e4ef;border-radius:999px;font-size:12px;font-weight:800;color:#17445c;padding:2px 8px}
+    @media (max-width:991px){.team-grid,.team-grid.collab-grid{grid-template-columns:1fr}.content-hero h1{font-size:28px}.content-page{padding:18px 15px 32px}}
+
+
+    /* Default compact map panels. Both remain draggable and resizable by the user. */
+    #mapToolbarPanel{
+      width:280px !important;
+      height:118px !important;
+      min-width:230px !important;
+      min-height:86px !important;
+      padding:9px 10px !important;
+      overflow:auto !important;
+    }
+    #mapToolbarPanel .mini-note{font-size:10.5px;line-height:1.25;margin-bottom:5px !important}
+    #mapToolbarPanel .map-panel-actions .btn{font-size:10px;padding:4px 7px}
+    #mapToolbarPanel .selection-info{font-size:10.5px;padding:5px 7px;margin-top:5px}
+    #mapLegend{
+      width:315px !important;
+      height:98px !important;
+      min-width:260px !important;
+      min-height:78px !important;
+      padding:8px 10px !important;
+      overflow:auto !important;
+    }
+    #mapLegend .legend-ramp{height:13px !important;margin:6px 0 4px !important}
+    #mapLegend .legend-labels{font-size:8.8px !important}
+    #mapLegend .pm-reference,#mapLegend #legendNote{font-size:8.8px !important;line-height:1.2}
+    #mapLegend .section-chip{font-size:9.5px;padding:4px 7px}
+
+    .about-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:16px}
+    .about-card{border:1px solid #dde9f0;border-radius:18px;background:linear-gradient(180deg,#fff,#f8fbfd);padding:17px;min-height:142px}
+    .about-card h3{font-size:17px;font-weight:950;color:#102033;margin:0 0 8px}
+    .about-card p,.about-card li{font-size:13.5px;line-height:1.48;color:#536b7d;margin-bottom:5px}
+    .about-card ul{margin:0;padding-left:18px}
+    .about-highlight{background:linear-gradient(135deg,#eef8fc,#ffffff);border:1px solid #d4eaf3;border-radius:18px;padding:16px;margin-top:14px;font-size:14px;line-height:1.55;color:#42586a}
+    @media (max-width:991px){.about-grid{grid-template-columns:1fr}}
+
+  </style>
+</head>
+<body>
+<header class="hero-header">
+  <div class="container-fluid py-3 px-4">
+    <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+      <div class="brand-lockup">
+        <div class="brand-icon">AQ</div>
+        <div>
+          <h1 class="brand-title">African Air Quality Explorer</h1>
+          <div class="brand-subtitle">Organized dynamic prototype with movable map panels, selectable map points, custom quantitative color bars, and stacked plots</div>
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+        <div class="top-page-nav" role="navigation" aria-label="AAQE pages">
+          <button class="top-page-btn active" type="button" data-page="dashboard"><i class="bi bi-speedometer2"></i>Dashboard</button>
+          <button class="top-page-btn" type="button" data-page="about"><i class="bi bi-info-circle"></i>About</button>
+          <button class="top-page-btn" type="button" data-page="team"><i class="bi bi-people"></i>Team</button>
+          <button class="top-page-btn" type="button" data-page="publications"><i class="bi bi-journal-text"></i>Publications</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="dashboardPage" class="section-wrap app-page active-page">
+  <section class="panel-card common-panel">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+      <div>
+        <div class="panel-title mb-2"><i class="bi bi-sliders"></i>Common analysis options</div>
+        <div class="help-text">Select the workflow first. The product, heat-map, and plotting panels below will then show only the options relevant to that workflow.</div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-outline-aaqe" onclick="resetDashboard()"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset</button>
+        <button class="btn btn-aaqe" onclick="downloadBundle()"><i class="bi bi-download me-1"></i>Download synthetic bundle</button>
+      </div>
+    </div>
+
+    <div class="row g-3 align-items-end">
+      <div class="col-12">
+        <label class="form-label">Analysis workflow</label>
+        <div class="analysis-tabs" role="group" aria-label="Analysis workflow">
+          <button class="analysis-btn active" type="button" data-category="historical"><i class="bi bi-clock-history"></i>Historical</button>
+          <button class="analysis-btn" type="button" data-category="nrt"><i class="bi bi-satellite"></i>Near real time</button>
+          <button class="analysis-btn" type="button" data-category="forecast"><i class="bi bi-cloud-sun"></i>Forecast</button>
+        </div>
+      </div>
+      <input type="hidden" id="focusSelect" value="africa" />
+      <div class="col-md-3">
+        <label class="form-label">Country</label>
+        <select id="countrySelect" class="form-select"></select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">City</label>
+        <select id="citySelect" class="form-select"></select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Station network</label>
+        <select id="stationSelect" class="form-select"></select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Map / valid date</label>
+        <input id="validDate" type="date" class="form-control" value="2026-02-18" />
+      </div>
+      <div class="col-md-3 forecast-only evaluation-only">
+        <label class="form-label d-flex justify-content-between"><span>Forecast lead time</span><span id="leadLabel">+24 h</span></label>
+        <input id="leadSlider" type="range" class="form-range" min="0" max="72" step="3" value="24" />
+      </div>
+      <div class="col-md-6">
+        <div id="activeContext" class="d-flex flex-wrap gap-1"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="row g-3">
+    <aside class="col-12 col-xl-3">
+      <div class="side-stack">
+        <section class="panel-card" id="productPanel">
+          <div class="panel-title"><i class="bi bi-database"></i>Product panel</div>
+          <label class="form-label">Product for analysis</label>
+          <select id="productSelect" class="form-select mb-2"></select>
+          <div class="mini-note mb-3" id="productHelp">Only products relevant to the selected workflow are listed. Map overlays do not change the underlying heat-map values.</div>
+
+          <div class="accordion" id="metadataAccordion">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#productMetaBox">
+                  Scientific metadata for selected product
+                </button>
+              </h2>
+              <div id="productMetaBox" class="accordion-collapse collapse" data-bs-parent="#metadataAccordion">
+                <div class="accordion-body" id="productMetadata"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-card" id="heatMapPanel">
+          <div class="panel-title"><i class="bi bi-map"></i>Heat-map panel</div>
+          <label class="form-label">Heat-map product</label>
+          <select id="heatProductSelect" class="form-select mb-2"></select>
+          <div class="toggle-grid mb-3">
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleHeat" checked><label class="form-check-label" for="toggleHeat">Show heat map</label></div>
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleGrid"><label class="form-check-label" for="toggleGrid">Inspection points</label></div>
+            <div class="form-check form-switch nrt-only"><input class="form-check-input" type="checkbox" id="toggleFires" checked><label class="form-check-label" for="toggleFires">Fire hotspots</label></div>
+          </div>
+          <div class="mini-note mb-2">Overlay toggles only show or hide layers. Station-observation products remain selectable here but display points only, not heat maps.</div>
+          <label class="form-label d-flex justify-content-between"><span>Heat-map opacity</span><span id="opacityLabel">78%</span></label>
+          <input id="opacitySlider" type="range" class="form-range" min="20" max="95" step="5" value="78" />
+
+          <div class="accordion colorbar-settings mt-3" id="colorbarAccordion">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#colorbarSettingsBox">
+                  Optional color-bar customization
+                </button>
+              </h2>
+              <div id="colorbarSettingsBox" class="accordion-collapse collapse" data-bs-parent="#colorbarAccordion">
+                <div class="accordion-body px-0 pb-0">
+                  <div class="toggle-grid mb-2">
+                    <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleColorbar" checked><label class="form-check-label" for="toggleColorbar">Show color bar</label></div>
+                    <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleAutoRange" checked><label class="form-check-label" for="toggleAutoRange">Auto min-max</label></div>
+                  </div>
+                  <label class="form-label">Color map</label>
+                  <select id="colorMapSelect" class="form-select mb-2">
+                    <option value="turbo" selected>Turbo / jet-like scientific</option>
+                    <option value="jet">Jet</option>
+                    <option value="viridis">Viridis</option>
+                    <option value="plasma">Plasma</option>
+                    <option value="inferno">Inferno</option>
+                    <option value="airquality">Air-quality green-yellow-red</option>
+                    <option value="bluered">Blue-white-red diverging</option>
+                  </select>
+                  <div class="colorbar-custom-row">
+                    <div><label class="form-label">Color min</label><input id="colorMinInput" type="number" step="0.1" class="form-control" value="0" /></div>
+                    <div><label class="form-label">Color max</label><input id="colorMaxInput" type="number" step="0.1" class="form-control" value="80" /></div>
+                  </div>
+                  <div class="mini-note mt-2">Auto min-max uses the current Africa-domain heat-map values. Custom range is useful when comparing different dates or products.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <hr>
+          <div class="toggle-grid">
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleCities" checked><label class="form-check-label" for="toggleCities">Observed stations</label></div>
+            <div class="form-check form-switch" style="display:none"><input class="form-check-input" type="checkbox" id="toggleStations" checked><label class="form-check-label" for="toggleStations">Stations</label></div>
+            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="toggleEvents" checked><label class="form-check-label" for="toggleEvents">Evidence-based events</label></div>
+          </div>
+        </section>
+
+        <section class="panel-card" id="plotPanel">
+          <div class="panel-title"><i class="bi bi-bar-chart-line"></i>Plotting panel</div>
+          <label class="form-label">Analysis frequency</label>
+          <select id="frequencySelect" class="form-select mb-2">
+            <option value="hourly">Hourly</option>
+            <option value="daily" selected>Daily</option>
+            <option value="monthly">Monthly</option>
+            <option value="annual">Annual / yearly</option>
+          </select>
+          <div class="row g-2 mb-2">
+            <div class="col-6"><label class="form-label">Plot start</label><input id="startDate" type="date" class="form-control" value="2026-01-01" /></div>
+            <div class="col-6"><label class="form-label">Plot end</label><input id="endDate" type="date" class="form-control" value="2026-02-18" /></div>
+          </div>
+          <label class="form-label">Plot type</label>
+          <select id="plotTypeSelect" class="form-select mb-3"></select>
+          <div class="panel-title mb-2">Comparison toggles</div>
+          <div id="plotToggleBox" class="toggle-grid"></div>
+          <div class="d-grid gap-2 mt-3">
+            <button class="btn btn-outline-aaqe" onclick="downloadPlotCSV()"><i class="bi bi-filetype-csv me-1"></i>Download plot CSV</button>
+            <button class="btn btn-outline-aaqe" onclick="downloadMapCSV()"><i class="bi bi-grid-3x3-gap me-1"></i>Download heat map CSV</button>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <section class="col-12 col-xl-9">
+      <div class="product-context-banner">
+        <div>
+          <h2 id="workflowTitle">Historical analysis</h2>
+          <p id="workflowDescription">Historical products support hourly, daily, monthly, and annual/yearly PM₂.₅ exploration with synthetic MERRA2, bias-corrected MERRA2-CNN, WashU 1-km, station PM₂.₅, and AERONET AOD context.</p>
+        </div>
+        <div class="d-flex flex-column align-items-end gap-2">
+          <span class="section-chip" id="selectedProductChip">MERRA2-CNN PM₂.₅</span>
+          <span class="section-chip" id="selectedTimeChip">Daily · 2026-01-01 to 2026-02-18</span>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Selected product value</div><div class="metric-value"><span id="metricMain">38</span><span class="metric-unit" id="metricMainUnit">µg m⁻³</span></div><div class="metric-caption"><span class="status-dot" id="metricDot"></span><span id="metricStatus">Elevated</span> at selected focus</div><div class="aq-index"><div id="metricFill" class="aq-fill" style="width:58%"></div></div></div>
+        <div class="metric-card"><div class="metric-label">Aerosol loading</div><div class="metric-value"><span id="metricAod">0.48</span><span class="metric-unit">AOD</span></div><div class="metric-caption">Synthetic 550-nm aerosol optical depth context</div></div>
+        <div class="metric-card"><div class="metric-label">Forecast PM₂.₅</div><div class="metric-value"><span id="metricForecast">52</span><span class="metric-unit">µg m⁻³</span></div><div class="metric-caption">Synthetic PM₂.₅ forecast at selected lead time</div></div>
+        <div class="metric-card"><div class="metric-label">Coverage</div><div class="metric-value"><span id="metricCoverage">86</span><span class="metric-unit">%</span></div><div class="metric-caption">Synthetic product availability in selected time window</div></div>
+      </div>
+
+      <div class="map-card mb-3">
+        <div class="map-toolbar floating-map-panel" id="mapToolbarPanel">
+          <div class="fw-bold drag-handle"><i class="bi bi-grip-vertical me-1"></i><i class="bi bi-layers me-1"></i>Interactive map view</div>
+          <div class="mini-note mb-2">Drag this panel, resize from the lower-right corner, and click an observed station, fire hotspot, event callout, or heat-map point to update the plots below.</div>
+          <div id="mapChips"></div>
+          <div id="mapSelectionInfo" class="selection-info"><strong>Selected focus:</strong> Africa overview</div>
+          <div class="map-panel-actions">
+            <button class="btn btn-outline-aaqe" onclick="resetPointSelection()"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset point</button>
+            <button class="btn btn-outline-aaqe" onclick="fitCurrentFocus()"><i class="bi bi-crosshair me-1"></i>Fit focus</button>
+          </div>
+          <div class="panel-resize-note">Moveable · resizable</div>
+        </div>
+        <div id="africaMap"></div>
+        <div class="map-legend floating-map-panel" id="mapLegend">
+          <div class="d-flex justify-content-between align-items-center drag-handle"><strong><i class="bi bi-grip-vertical me-1"></i><span id="legendTitle">PM₂.₅ heat map</span></strong><span class="section-chip" id="legendUnit">µg m⁻³</span></div>
+          <div class="legend-ramp" id="legendRamp"></div>
+          <div class="legend-labels" id="legendLabels"><span>Min</span><span>Q1</span><span>Mid</span><span>Q3</span><span>Max</span></div>
+          <div class="pm-reference" id="pmReference"><strong>PM₂.₅ category reference:</strong> Good 0–9, Moderate 9.1–35.4, USG 35.5–55.4, Unhealthy 55.5–125.4, Very unhealthy 125.5–225.4, Hazardous ≥225.5 µg m⁻³.</div>
+          <div class="mini-note mt-2" id="legendNote">Quantitative min-max color scale for the selected map layer.</div>
+          <div class="panel-resize-note">Moveable · resizable</div>
+        </div>
+      </div>
+
+      <div class="plot-stack">
+        <div class="plot-card">
+          <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap mb-2">
+            <div><div class="panel-title mb-1"><i class="bi bi-graph-up"></i>Main plot</div><div class="mini-note" id="mainPlotNote">The x-axis responds to hourly, daily, monthly, and annual/yearly frequency.</div></div>
+            <span class="section-chip" id="mainPlotChip">Daily time series</span>
+          </div>
+
+          <div class="city-compare-controls" id="cityCompareControls" style="display:none;">
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-2">
+              <div>
+                <div class="panel-title mb-1"><i class="bi bi-buildings"></i>City comparison controls</div>
+                <div class="mini-note">Select one country and up to 10 cities directly in the plot window.</div>
+              </div>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label">Country</label>
+                <select id="compareCountrySelect" class="form-select"></select>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label">Cities to include in plot (up to 10)</label>
+                <select id="compareCitySelect" class="form-select" multiple></select>
+              </div>
+            </div>
+          </div>
+          <div id="mainPlot" class="plot-frame-tall"></div>
+        </div>
+        <div class="plot-card">
+          <div class="d-flex align-items-start justify-content-between gap-2 flex-wrap mb-2">
+            <div><div class="panel-title mb-1"><i class="bi bi-bar-chart"></i>Supporting plot</div><div class="mini-note" id="supportPlotNote">A second stacked plot provides ranking, scatter, metrics, or climatological context without horizontal scrolling.</div></div>
+            <span class="section-chip" id="supportPlotChip">Context plot</span>
+          </div>
+          <div id="supportPlot" class="plot-frame"></div>
+        </div>
+      </div>
+
+      <div class="plot-card">
+        <div class="panel-title"><i class="bi bi-box-arrow-down"></i>Downloadable synthetic outputs</div>
+        <div class="table-responsive">
+          <table class="table data-table table-hover align-middle">
+            <thead><tr><th>Current module</th><th>Download</th><th>What it contains</th><th>Action</th></tr></thead>
+            <tbody id="downloadTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+
+<main id="aboutPage" class="content-page app-page">
+  <section class="content-hero">
+    <h1>HAQAST Project: African Air Quality Explorer</h1>
+    <p><strong>African Air Quality Explorer Powered by NASA Data and Research</strong> is a NASA HAQAST project led by Dr. Pawan Gupta in partnership with the U.S. Department of State. The project is designed to integrate NASA satellite observations, model outputs, ground measurements, and applied research into an accessible air-quality monitoring, analysis, and forecasting platform for African countries and cities.</p>
+  </section>
+
+  <section class="content-section">
+    <div class="content-heading-row"><h2>Project motivation</h2><span>HAQAST Earth Action</span></div>
+    <p class="about-highlight">Many African countries face severe air-quality challenges from urban emissions, biomass burning, Saharan dust, industrial activity, transportation, and waste burning, while reliable ground monitoring remains limited in many regions. The AAQE project addresses this gap by providing a trusted, open, and user-friendly platform that makes NASA data easier to interpret and apply for research, public communication, capacity building, and decision support.</p>
+    <div class="about-grid">
+      <div class="about-card">
+        <h3>Primary project goals</h3>
+        <ul>
+          <li>Develop and deploy the African Air Quality Explorer as an online visualization and analytical tool.</li>
+          <li>Support African air-quality monitoring, forecasting, and exposure-related research using NASA data and research products.</li>
+          <li>Enable users to explore air-quality patterns from continental overview to country, city, station, and selected map-point scales.</li>
+          <li>Provide downloadable time series and gridded outputs for offline analysis and stakeholder use.</li>
+        </ul>
+      </div>
+      <div class="about-card">
+        <h3>Stakeholder and capacity-building role</h3>
+        <ul>
+          <li>Support U.S. Department of State environmental diplomacy and air-quality capacity-building efforts in Africa.</li>
+          <li>Engage governmental, public, academic, and local partner organizations through training and workshops.</li>
+          <li>Help users access trusted air-quality information without requiring each organization to build its own satellite-data processing tools.</li>
+          <li>Strengthen local technical capacity for interpreting satellite, model, and ground-based air-quality datasets.</li>
+        </ul>
+      </div>
+      <div class="about-card">
+        <h3>Science focus</h3>
+        <ul>
+          <li>Focus on particle pollution, especially PM<sub>2.5</sub> and atmospheric aerosols.</li>
+          <li>Represent major aerosol events such as dust, fire/smoke, regional haze, and urban pollution episodes.</li>
+          <li>Support historical analysis, near-real-time event monitoring, and forecast interpretation.</li>
+          <li>Link satellite imagery, AOD, fire activity, PM<sub>2.5</sub>, and station-based observations in one workflow.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-section">
+    <div class="content-heading-row"><h2>AAQE data and dashboard capabilities</h2><span>Historical · NRT · Forecast</span></div>
+    <div class="about-grid">
+      <div class="about-card">
+        <h3>Historical datasets</h3>
+        <ul>
+          <li>MERRA2 PM<sub>2.5</sub> and MERRA2-CNN / ML bias-corrected PM<sub>2.5</sub>.</li>
+          <li>Monthly and annual high-resolution satellite-informed PM<sub>2.5</sub> products.</li>
+          <li>City and country time series at hourly, daily, monthly, and yearly time scales.</li>
+          <li>Comparison with station PM<sub>2.5</sub> and AERONET-style AOD where available.</li>
+        </ul>
+      </div>
+      <div class="about-card">
+        <h3>Near-real-time satellite layers</h3>
+        <ul>
+          <li>VIIRS true-color imagery for visual context on dust, smoke, haze, and clouds.</li>
+          <li>Satellite AOD layers to support aerosol event interpretation.</li>
+          <li>Fire-hotspot overlays for identifying active fire and smoke-source regions.</li>
+          <li>Ground-network context from AERONET, OpenAQ, AirQo, and related monitoring efforts.</li>
+        </ul>
+      </div>
+      <div class="about-card">
+        <h3>Forecast and user access</h3>
+        <ul>
+          <li>Forward-looking PM<sub>2.5</sub> forecast information for selected African cities and regions.</li>
+          <li>Interactive plots for time series, city comparison, AOD-PM<sub>2.5</sub> relationships, station context, and forecast summaries.</li>
+          <li>Expandable product metadata to communicate source, resolution, update frequency, and appropriate use.</li>
+          <li>Download tools for map-layer values, selected time series, station context, and synthetic dashboard demonstration data.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-section">
+    <div class="content-heading-row"><h2>Dashboard design concept</h2><span>Overview to local detail</span></div>
+    <p>The dashboard is organized to follow the intended AAQE user workflow. Users start with an Africa-wide map overview, select a historical, near-real-time, or forecast workflow, choose the relevant product, and then drill down to a country, city, station, or clicked map point. The goal is to make NASA air-quality information easier to explore, compare, explain, and download for research colleagues, decision makers, and partner organizations.</p>
+  </section>
+</main>
+
+<main id="teamPage" class="content-page app-page">
+  <section class="content-hero">
+    <h1>Project Team</h1>
+    <p>Team members and collaborators supporting the African Air Quality Explorer dashboard, NASA data integration, air-quality analysis, forecasting, stakeholder engagement, training, and dissemination.</p>
+  </section>
+  <section class="content-section">
+      <div class="content-heading-row"><h2>Working Team</h2><span>6 members</span></div>
+      <div class="team-grid "><article class="team-card">
+      <div class="team-avatar">PG</div>
+      <div class="team-card-body"><h3>Pawan Gupta, Ph.D.</h3><div class="team-role">Research Scientist, Principal Investigator</div><div class="team-affiliation"><i class="bi bi-building"></i> NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">JS</div>
+      <div class="team-card-body"><h3>Junhyeon Seo, Ph.D.</h3><div class="team-role">Assistant Research Scientist</div><div class="team-affiliation"><i class="bi bi-building"></i> Morgan State University, GESTAR II, NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">AS</div>
+      <div class="team-card-body"><h3>Alqamah Sayeed, Ph.D.</h3><div class="team-role">Air Quality Scientist</div><div class="team-affiliation"><i class="bi bi-building"></i> University of Alabama Huntsville, NASA Marshall Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">AK</div>
+      <div class="team-card-body"><h3>Ahmed Khan Salman, Ph.D.</h3><div class="team-role">Postdoctoral Research Scientist</div><div class="team-affiliation"><i class="bi bi-building"></i> ERT, GESTAR II, NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">SN</div>
+      <div class="team-card-body"><h3>Sujan Neupane</h3><div class="team-role">Faculty Research Assistant</div><div class="team-affiliation"><i class="bi bi-building"></i> UMBC, GESTAR II, NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">AT</div>
+      <div class="team-card-body"><h3>Avinash Telagamsetti</h3><div class="team-role">Backend Developer</div><div class="team-affiliation"><i class="bi bi-building"></i> UMBC</div></div>
+    </article></div>
+    </section>
+<section class="content-section">
+      <div class="content-heading-row"><h2>Supporting Team Members</h2><span>3 members</span></div>
+      <div class="team-grid "><article class="team-card">
+      <div class="team-avatar">RC</div>
+      <div class="team-card-body"><h3>Robert C. Levy, Ph.D.</h3><div class="team-role">Atmospheric Scientist, Aerosol Retrieval Expert</div><div class="team-affiliation"><i class="bi bi-building"></i> NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">CF</div>
+      <div class="team-card-body"><h3>Catherine Fox</h3><div class="team-role">Air Quality Program Analyst</div><div class="team-affiliation"><i class="bi bi-building"></i> U.S. Department of State, Office of Environmental Quality</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">AC</div>
+      <div class="team-card-body"><h3>Andrew Clark</h3><div class="team-role">Chief for Chemicals, Air Quality, and Waste Management</div><div class="team-affiliation"><i class="bi bi-building"></i> U.S. Department of State</div></div>
+    </article></div>
+    </section>
+<section class="content-section">
+      <div class="content-heading-row"><h2>Collaborators</h2><span>8 members</span></div>
+      <div class="team-grid collab-grid"><article class="team-card">
+      <div class="team-avatar">KS</div>
+      <div class="team-card-body"><h3>Kimber Scavo</h3><div class="team-affiliation"><i class="bi bi-building"></i> U.S. Department of State</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">KD</div>
+      <div class="team-card-body"><h3>Kevin Daucher</h3><div class="team-affiliation"><i class="bi bi-building"></i> U.S. Department of State</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">DO</div>
+      <div class="team-card-body"><h3>Deo Okure</h3><div class="team-affiliation"><i class="bi bi-building"></i> Makerere University, AirQo, Uganda</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">DN</div>
+      <div class="team-card-body"><h3>Didier Ntwali, Ph.D.</h3><div class="team-affiliation"><i class="bi bi-building"></i> Rwanda Climate Observatory, Rwanda</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">AM</div>
+      <div class="team-card-body"><h3>Aderiana Mbandi, Ph.D.</h3><div class="team-affiliation"><i class="bi bi-building"></i> Africa Office, UNEP</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">CS</div>
+      <div class="team-card-body"><h3>Charles Sebukeera</h3><div class="team-affiliation"><i class="bi bi-building"></i> Africa Office, UNEP</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">JC</div>
+      <div class="team-card-body"><h3>Jennifer C. Wei, Ph.D.</h3><div class="team-affiliation"><i class="bi bi-building"></i> GES DISC, NASA Goddard Space Flight Center</div></div>
+    </article>
+<article class="team-card">
+      <div class="team-avatar">MF</div>
+      <div class="team-card-body"><h3>Melanie Follette Cook, Ph.D.</h3><div class="team-affiliation"><i class="bi bi-building"></i> ARSET, NASA Goddard Space Flight Center</div></div>
+    </article></div>
+    </section>
+</main>
+
+<main id="publicationsPage" class="content-page app-page">
+  <section class="content-hero">
+    <h1>Related Publications</h1>
+    <p>Selected publications and data products supporting the AAQE scientific basis, including machine-learning PM<sub>2.5</sub> forecasting, MERRA2-CNN PM<sub>2.5</sub>, geostationary PM<sub>2.5</sub>, AOD retrievals, AERONET-based aerosol information, and fire/smoke air-quality applications.</p>
+  </section>
+  <section class="content-section">
+    <div class="content-heading-row"><h2>Publications and Data Products</h2><span>21 references</span></div>
+    <ol class="publication-list">
+      <li>J. Seo and P. Gupta, &quot;Adaptive expert-guided deep imbalanced regression for global PM<sub>2.5</sub> forecasting with temporal convolutional networks and GEOS-FP inputs,&quot; npj Climate and Atmospheric Science, 2026, doi: 10.1038/s41612-026-01437-1.</li>
+<li>Z. Dong et al., &quot;Machine learning bias correction of HRRR-Smoke surface PM<sub>2.5</sub> forecasts during the Alaska wildfire season,&quot; ACS ES&amp;T Air, vol. 3, no. 5, pp. 1263-1275, 2026, doi: 10.1021/acsestair.5c00409.</li>
+<li>P. Gupta and A. Sayeed, &quot;MERRA2_CNN_HAQAST_PM25: Hourly bias-corrected PM<sub>2.5</sub> datasets for global air quality assessment,&quot; Geoscience Data Journal, vol. 13, no. 2, Art. no. e70070, 2026, doi: 10.1002/gdj3.70070.</li>
+<li>P. Gupta, &quot;MERRA2_CNN_HAQAST bias corrected global hourly surface total PM<sub>2.5</sub> mass concentration, V1,&quot; NASA Goddard Earth Sciences Data and Information Services Center, 2023, doi: 10.5067/OCKK5HCFW5N3.</li>
+<li>K. Gui et al., &quot;Advancing operational global aerosol forecasting with machine learning,&quot; Nature, vol. 651, no. 8106, pp. 658-665, 2026, doi: 10.1038/s41586-026-10234-y.</li>
+<li>S. Park, A. Sayeed, J. Seo, B. H. Henderson, A. R. Naeger, and P. Gupta, &quot;Hour by hour PM<sub>2.5</sub> mapping using geostationary satellites,&quot; ACS ES&amp;T Air, vol. 2, no. 9, pp. 1816-1830, 2025, doi: 10.1021/acsestair.4c00365.</li>
+<li>J. Seo et al., &quot;PM<sub>2.5</sub> forecasting at U.S. embassies and consulates worldwide using NASA model powered by machine learning,&quot; Earth and Space Science, vol. 12, no. 6, Art. no. e2025EA004210, 2025, doi: 10.1029/2025EA004210.</li>
+<li>A. Sayeed, P. Gupta, B. Henderson, S. Kondragunta, H. Zhang, and Y. Liu, &quot;GOES-R PM<sub>2.5</sub> evaluation and bias correction: A deep learning approach,&quot; Earth and Space Science, vol. 12, no. 2, Art. no. e2024EA004012, 2025, doi: 10.1029/2024EA004012.</li>
+<li>P. Gupta et al., &quot;Increasing aerosol optical depth spatial and temporal availability by merging datasets from geostationary and sun-synchronous satellites,&quot; Atmospheric Measurement Techniques, vol. 17, no. 18, pp. 5455-5476, 2024, doi: 10.5194/amt-17-5455-2024.</li>
+<li>M. Kim, R. C. Levy, L. A. Remer, S. Mattoo, and P. Gupta, &quot;Parameterizing spectral surface reflectance relationships for the Dark Target aerosol algorithm applied to a geostationary imager,&quot; Atmospheric Measurement Techniques, vol. 17, no. 7, pp. 1913-1939, 2024, doi: 10.5194/amt-17-1913-2024.</li>
+<li>T. Zhao, J. Mao, P. Gupta, H. Zhang, and J. Wang, &quot;Observational constraints on the aerosol optical depth-surface PM<sub>2.5</sub> relationship during Alaskan wildfire seasons,&quot; ACS ES&amp;T Air, vol. 1, no. 9, pp. 1164-1176, 2024, doi: 10.1021/acsestair.4c00120.</li>
+<li>X. Zhang et al., &quot;Aerosol components derived from global AERONET measurements by GRASP: A new value-added aerosol component global dataset and its application,&quot; Bulletin of the American Meteorological Society, vol. 105, no. 10, pp. E1822-E1848, 2024, doi: 10.1175/BAMS-D-23-0260.1.</li>
+<li>J. Liu et al., &quot;New top-down estimation of daily mass and number column density of black carbon driven by OMI and AERONET observations,&quot; Remote Sensing of Environment, vol. 315, Art. no. 114436, 2024, doi: 10.1016/j.rse.2024.114436.</li>
+<li>A. Sayeed, P. Lin, P. Gupta, N. N. M. Tran, V. Buchard, and S. Christopher, &quot;Hourly and daily PM<sub>2.5</sub> estimations using MERRA-2: A machine learning approach,&quot; Earth and Space Science, vol. 9, no. 11, Art. no. e2022EA002375, 2022, doi: 10.1029/2022EA002375.</li>
+<li>P. Gupta et al., &quot;Machine learning algorithm for estimating surface PM<sub>2.5</sub> in Thailand,&quot; Aerosol and Air Quality Research, vol. 21, no. 11, Art. no. 210105, 2021, doi: 10.4209/aaqr.210105.</li>
+<li>J. M. Carmona, P. Gupta, D. F. Lozano-Garcia, A. Y. Vanoye, I. Y. Hernandez-Paniagua, and A. Mendoza, &quot;Evaluation of MODIS aerosol optical depth and surface data using an ensemble modeling approach to assess PM<sub>2.5</sub> temporal and spatial distributions,&quot; Remote Sensing, vol. 13, no. 16, Art. no. 3102, 2021, doi: 10.3390/rs13163102.</li>
+<li>Z. Xue, P. Gupta, and S. A. Christopher, &quot;Satellite-based estimation of the impacts of summertime wildfires on PM<sub>2.5</sub> concentration in the United States,&quot; Atmospheric Chemistry and Physics, vol. 21, no. 14, pp. 11243-11256, 2021, doi: 10.5194/acp-21-11243-2021.</li>
+<li>P. Gupta, L. A. Remer, F. Patadia, R. C. Levy, and S. A. Christopher, &quot;High-resolution gridded Level 3 aerosol optical depth data from MODIS,&quot; Remote Sensing, vol. 12, no. 17, Art. no. 2847, 2020, doi: 10.3390/rs12172847.</li>
+<li>P. Gupta, R. C. Levy, S. Mattoo, L. A. Remer, R. E. Holz, and A. K. Heidinger, &quot;Applying the Dark Target aerosol algorithm with Advanced Himawari Imager observations during the KORUS-AQ field campaign,&quot; Atmospheric Measurement Techniques, vol. 12, no. 12, pp. 6557-6577, 2019, doi: 10.5194/amt-12-6557-2019.</li>
+<li>P. Gupta et al., &quot;Impact of California fires on local and regional air quality: The role of a low-cost sensor network and satellite observations,&quot; GeoHealth, vol. 2, no. 6, pp. 172-181, 2018, doi: 10.1029/2018GH000136.</li>
+<li>P. Gupta, R. C. Levy, S. Mattoo, L. A. Remer, and L. A. Munchak, &quot;A surface reflectance scheme for retrieving aerosol optical depth over urban surfaces in MODIS Dark Target retrieval algorithm,&quot; Atmospheric Measurement Techniques, vol. 9, no. 7, pp. 3293-3308, 2016, doi: 10.5194/amt-9-3293-2016.</li>
+    </ol>
+  </section>
+</main>
+
+<div class="floating-toast" id="toastBox"></div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+const categoryConfig = {
+  historical: {
+    title:'Historical analysis',
+    description:'Historical products support hourly, daily, monthly, and annual/yearly PM₂.₅ exploration with synthetic MERRA2, bias-corrected MERRA2-CNN, WashU 1-km, station PM₂.₅, and AERONET AOD context.',
+    products:[
+      {id:'merra2_pm25', label:'MERRA2 PM₂.₅', unit:'µg m⁻³'},
+      {id:'merra2_cnn_pm25', label:'MERRA2-CNN / ML PM₂.₅', unit:'µg m⁻³'},
+      {id:'washu_pm25', label:'WashU 1-km PM₂.₅', unit:'µg m⁻³'},
+      {id:'historical_obs', label:'Ground-observed PM₂.₅', unit:'µg m⁻³'},
+      {id:'aeronet_aod', label:'AERONET AOD', unit:'AOD 500/550 nm'}
+    ],
+    heatProducts:['merra2_pm25','merra2_cnn_pm25','washu_pm25','aeronet_aod'],
+    plots:[
+      {id:'timeseries', label:'Time series'},
+      {id:'cityCompare', label:'City comparison'},
+      {id:'ranking', label:'City ranking'},
+      {id:'climatology', label:'Monthly climatology'},
+      {id:'annualTrend', label:'Annual / yearly trend'}
+    ],
+    toggles:['merra2_pm25','merra2_cnn_pm25','washu_pm25','historical_obs','aeronet_aod'],
+    defaultToggles:['merra2_pm25','merra2_cnn_pm25','washu_pm25','historical_obs']
+  },
+  nrt: {
+    title:'Near-real-time satellite analysis',
+    description:'Near-real-time products focus on VIIRS AOD, fire hotspots, RGB context, and ground-network status for current air-quality event interpretation.',
+    products:[
+      {id:'viirs_aod', label:'VIIRS AOD', unit:'AOD 550 nm'},
+      {id:'viirs_rgb', label:'VIIRS true-color context', unit:'qualitative'},
+      {id:'fire_hotspots', label:'Fire hotspots', unit:'count'},
+      {id:'aeronet_aod', label:'AERONET AOD', unit:'AOD 500/550 nm'},
+      {id:'openaq_pm25', label:'OpenAQ / AirQo PM₂.₅', unit:'µg m⁻³'}
+    ],
+    heatProducts:['viirs_aod','openaq_pm25','fire_hotspots'],
+    plots:[
+      {id:'timeseries', label:'Time series'},
+      {id:'scatterAodPm', label:'AOD vs PM₂.₅ scatter'},
+      {id:'stationNetwork', label:'Station network comparison'},
+      {id:'fireActivity', label:'Fire activity bar plot'},
+      {id:'availability', label:'Product availability'}
+    ],
+    toggles:['viirs_aod','fire_hotspots','aeronet_aod','openaq_pm25'],
+    defaultToggles:['viirs_aod','openaq_pm25']
+  },
+  forecast: {
+    title:'Forecast analysis',
+    description:'Forecast products show synthetic GEOS-FP-ML PM₂.₅ out to 72 hours, with forecast horizon, uncertainty, and city-level forecast categories.',
+    products:[
+      {id:'geos_fp_ml_pm25', label:'GEOS-FP-ML PM₂.₅ forecast', unit:'µg m⁻³'},
+      {id:'forecast_uncertainty', label:'Forecast uncertainty', unit:'µg m⁻³'},
+      {id:'forecast_category', label:'Forecast PM₂.₅ category', unit:'category'}
+    ],
+    heatProducts:['geos_fp_ml_pm25','forecast_uncertainty'],
+    plots:[
+      {id:'forecastLead', label:'0-72 h forecast'},
+      {id:'forecastEnvelope', label:'Forecast with uncertainty'},
+      {id:'leadMapSeries', label:'Lead-time variation'},
+      {id:'ranking', label:'City forecast ranking'},
+      {id:'categoryBar', label:'Forecast category summary'}
+    ],
+    toggles:['geos_fp_ml_pm25','forecast_uncertainty'],
+    defaultToggles:['geos_fp_ml_pm25','forecast_uncertainty']
+  },
+  evaluation: {
+    title:'Forecast evaluation',
+    description:'Evaluation products compare synthetic hindcast forecasts with observation-like values and summarize bias, RMSE, correlation, and exceedance skill.',
+    products:[
+      {id:'hindcast_vs_obs', label:'Hindcast forecast vs observation', unit:'µg m⁻³'},
+      {id:'forecast_bias', label:'Forecast bias / residual', unit:'µg m⁻³'},
+      {id:'rmse_skill', label:'Forecast skill metrics', unit:'metric'},
+      {id:'exceedance_skill', label:'Exceedance detection skill', unit:'%' }
+    ],
+    heatProducts:['forecast_bias','hindcast_vs_obs'],
+    plots:[
+      {id:'forecastObs', label:'Forecast vs observation time series'},
+      {id:'scatterForecastObs', label:'Forecast vs observation scatter'},
+      {id:'biasLead', label:'Bias by lead time'},
+      {id:'metricsBar', label:'Skill metrics bar plot'},
+      {id:'exceedance', label:'Exceedance performance'}
+    ],
+    toggles:['hindcast_vs_obs','forecast_bias','rmse_skill','exceedance_skill'],
+    defaultToggles:['hindcast_vs_obs','forecast_bias','rmse_skill','exceedance_skill']
+  }
+};
+
+const productMeta = {
+  merra2_pm25:{short:'Coarse-resolution historical PM₂.₅ baseline from reanalysis-like model fields.', temporal:'Hourly, daily, monthly, annual/yearly', resolution:'Coarse global grid, synthetic here', use:'Long-term baseline, broad-scale regional context, and comparison against bias-corrected products.'},
+  merra2_cnn_pm25:{short:'Bias-corrected historical PM₂.₅ product using synthetic CNN/ML correction behavior.', temporal:'Hourly, daily, monthly, annual/yearly', resolution:'Model-informed gridded product, synthetic here', use:'Primary historical PM₂.₅ time-series product for city and country analysis.'},
+  washu_pm25:{short:'High-resolution satellite-informed annual and monthly PM₂.₅ product represented synthetically.', temporal:'Monthly and annual/yearly are most appropriate', resolution:'1-km style synthetic product', use:'Fine-scale spatial gradients and urban exposure context.'},
+  historical_obs:{short:'Observation-like PM₂.₅ values from reference and low-cost station networks.', temporal:'Hourly and daily are most appropriate', resolution:'Point stations', use:'Validation context and local interpretation.'},
+  viirs_aod:{short:'Near-real-time aerosol optical depth proxy for dust, smoke, and haze.', temporal:'Daily or overpass-level synthetic values', resolution:'Satellite swath/grid style', use:'Aerosol event detection and spatial context for PM₂.₅.'},
+  viirs_rgb:{short:'True-color satellite context layer represented as a qualitative dashboard layer.', temporal:'Near-real-time daily imagery context', resolution:'Imagery layer', use:'Visual interpretation of smoke, dust, cloud, and surface context.'},
+  fire_hotspots:{short:'Active fire hotspot counts and markers for identifying smoke source regions.', temporal:'Hourly or daily', resolution:'Point detections', use:'Smoke source attribution and regional event interpretation.'},
+  aeronet_aod:{short:'Ground-based aerosol optical depth station context.', temporal:'Hourly to daily', resolution:'Point stations', use:'AOD validation and aerosol event confirmation.'},
+  openaq_pm25:{short:'Ground-network PM₂.₅ values from OpenAQ/AirQo-style stations.', temporal:'Hourly and daily', resolution:'Point stations', use:'Local PM₂.₅ monitoring and model/satellite comparison.'},
+  geos_fp_ml_pm25:{short:'Synthetic 72-hour ML-based PM₂.₅ forecast.', temporal:'3-hourly to daily forecast lead times', resolution:'Forecast grid and city extract', use:'Forward-looking air-quality planning and advisories.'},
+  forecast_uncertainty:{short:'Synthetic forecast uncertainty envelope tied to lead time and aerosol-event conditions.', temporal:'0-72 h lead times', resolution:'Forecast grid and city extract', use:'Communicating confidence and risk.'},
+  forecast_category:{short:'Forecast PM₂.₅ category based on value ranges.', temporal:'0-72 h lead times', resolution:'City and grid summaries', use:'User-friendly forecast communication.'},
+  forecast_peak:{short:'Maximum forecast PM₂.₅ during the selected forecast window.', temporal:'0-72 h lead times', resolution:'City and grid summaries', use:'Highlighting expected peak exposure period.'},
+  hindcast_vs_obs:{short:'Synthetic hindcast forecast compared with observation-like PM₂.₅.', temporal:'Hourly, daily, monthly, annual/yearly', resolution:'City and station extracts', use:'Performance assessment.'},
+  forecast_bias:{short:'Synthetic forecast minus observation residual.', temporal:'Hourly, daily, monthly, annual/yearly', resolution:'City, station, and grid summaries', use:'Identifying where forecasts may overestimate or underestimate PM₂.₅.'},
+  rmse_skill:{short:'Summary forecast skill metrics represented with synthetic values.', temporal:'Aggregated over selected period', resolution:'City/station summary', use:'Model evaluation and communication.'},
+  exceedance_skill:{short:'Synthetic exceedance detection statistics.', temporal:'Aggregated over selected period', resolution:'City/station summary', use:'Evaluating whether the forecast captures high-PM₂.₅ events.'}
+};
+
+const countryMeta = {
+  'Africa overview': {center:[2,20], zoom:4},
+  'Nigeria': {center:[9.1,8.7], zoom:6},
+  'Ghana': {center:[7.95,-1.02], zoom:7},
+  'Uganda': {center:[1.37,32.29], zoom:7},
+  'Rwanda': {center:[-1.94,29.87], zoom:8},
+  'Burundi': {center:[-3.37,29.92], zoom:8},
+  'Cameroon': {center:[5.7,12.7], zoom:6},
+  'South Africa': {center:[-29.1,24.7], zoom:5},
+  'Botswana': {center:[-22.2,24.7], zoom:6},
+  'Kenya': {center:[0.1,37.9], zoom:6},
+  'Ethiopia': {center:[9.1,40.5], zoom:6},
+  'Egypt': {center:[26.8,30.8], zoom:6},
+  'Sudan': {center:[15.5,30.2], zoom:6},
+  'Senegal': {center:[14.4,-14.5], zoom:7},
+  'Morocco': {center:[31.8,-7.1], zoom:6},
+  'Algeria': {center:[28.0,2.6], zoom:5},
+  'Mali': {center:[17.6,-3.9], zoom:6},
+  'Tanzania': {center:[-6.4,34.9], zoom:6},
+  'DR Congo': {center:[-2.9,23.6], zoom:5},
+  'Angola': {center:[-11.2,17.8], zoom:6},
+  'Niger': {center:[17.6,9.5], zoom:6},
+  'Burkina Faso': {center:[12.3,-1.6], zoom:7}
+};
+
+const cities = [
+  {name:'Lagos', country:'Nigeria', lat:6.5244, lon:3.3792, base:56, pop:21000, region:'West Africa', type:'Urban traffic + coastal haze', station:'OpenAQ-LAG-01'},
+  {name:'Kano', country:'Nigeria', lat:12.0022, lon:8.5920, base:61, pop:4300, region:'Sahel', type:'Dust + urban', station:'OpenAQ-KAN-02'},
+  {name:'Abuja', country:'Nigeria', lat:9.0765, lon:7.3986, base:43, pop:3700, region:'West Africa', type:'Urban mixed', station:'Embassy-ABJ'},
+  {name:'Accra', country:'Ghana', lat:5.6037, lon:-0.1870, base:33, pop:2500, region:'West Africa', type:'Coastal urban', station:'OpenAQ-ACC'},
+  {name:'Kumasi', country:'Ghana', lat:6.6885, lon:-1.6244, base:37, pop:3600, region:'West Africa', type:'Urban + biomass', station:'AirQo-KUM'},
+  {name:'Kampala', country:'Uganda', lat:0.3476, lon:32.5825, base:42, pop:3600, region:'East Africa', type:'Urban + biomass', station:'AirQo-KLA'},
+  {name:'Gulu', country:'Uganda', lat:2.7746, lon:32.2990, base:34, pop:180, region:'East Africa', type:'Regional smoke', station:'AirQo-GUL'},
+  {name:'Kigali', country:'Rwanda', lat:-1.9441, lon:30.0619, base:24, pop:1300, region:'East Africa', type:'Highland urban', station:'AERONET-KGL'},
+  {name:'Bujumbura', country:'Burundi', lat:-3.3614, lon:29.3599, base:29, pop:1100, region:'East Africa', type:'Lake basin urban', station:'OpenAQ-BJM'},
+  {name:'Yaoundé', country:'Cameroon', lat:3.8480, lon:11.5021, base:35, pop:4400, region:'Central Africa', type:'Urban + biomass', station:'OpenAQ-YAO'},
+  {name:'Douala', country:'Cameroon', lat:4.0511, lon:9.7679, base:39, pop:3900, region:'Central Africa', type:'Port + industry', station:'OpenAQ-DLA'},
+  {name:'Johannesburg', country:'South Africa', lat:-26.2041, lon:28.0473, base:34, pop:5900, region:'Southern Africa', type:'Industrial/urban', station:'OpenAQ-JNB'},
+  {name:'Pretoria', country:'South Africa', lat:-25.7479, lon:28.2293, base:31, pop:2600, region:'Southern Africa', type:'Urban/industrial', station:'OpenAQ-PTA'},
+  {name:'Cape Town', country:'South Africa', lat:-33.9249, lon:18.4241, base:18, pop:4800, region:'Southern Africa', type:'Coastal clean', station:'OpenAQ-CPT'},
+  {name:'Durban', country:'South Africa', lat:-29.8587, lon:31.0218, base:24, pop:3800, region:'Southern Africa', type:'Coastal industrial', station:'OpenAQ-DUR'},
+  {name:'Gaborone', country:'Botswana', lat:-24.6282, lon:25.9231, base:26, pop:270, region:'Southern Africa', type:'Semi-arid urban', station:'OpenAQ-GBE'},
+  {name:'Nairobi', country:'Kenya', lat:-1.2921, lon:36.8219, base:28, pop:5400, region:'East Africa', type:'Urban + highland', station:'AERONET-NBO'},
+  {name:'Addis Ababa', country:'Ethiopia', lat:8.9806, lon:38.7578, base:31, pop:5400, region:'Horn of Africa', type:'Highland urban', station:'Embassy-ADD'},
+  {name:'Cairo', country:'Egypt', lat:30.0444, lon:31.2357, base:52, pop:22000, region:'North Africa', type:'Dust + megacity', station:'AERONET-CAI'},
+  {name:'Khartoum', country:'Sudan', lat:15.5007, lon:32.5599, base:57, pop:6200, region:'Sahel', type:'Dust + urban', station:'OpenAQ-KRT'},
+  {name:'Dakar', country:'Senegal', lat:14.7167, lon:-17.4677, base:38, pop:3300, region:'West Africa', type:'Dust + coastal', station:'AERONET-DAK'},
+  {name:'Bamako', country:'Mali', lat:12.6392, lon:-8.0029, base:48, pop:2800, region:'Sahel', type:'Dust + biomass', station:'AERONET-BKO'},
+  {name:'Dar es Salaam', country:'Tanzania', lat:-6.7924, lon:39.2083, base:27, pop:7500, region:'East Africa', type:'Coastal urban', station:'OpenAQ-DAR'},
+  {name:'Kinshasa', country:'DR Congo', lat:-4.4419, lon:15.2663, base:39, pop:17000, region:'Central Africa', type:'Urban + biomass', station:'OpenAQ-FIH'},
+  {name:'Luanda', country:'Angola', lat:-8.8390, lon:13.2894, base:36, pop:9000, region:'Southern Africa', type:'Coastal urban', station:'OpenAQ-LAD'},
+  {name:'Niamey', country:'Niger', lat:13.5116, lon:2.1254, base:53, pop:1300, region:'Sahel', type:'Dust', station:'AERONET-NIA'},
+  {name:'Ouagadougou', country:'Burkina Faso', lat:12.3714, lon:-1.5197, base:45, pop:2800, region:'Sahel', type:'Dust + urban', station:'OpenAQ-OUA'}
+];
+
+const eventCenters = [
+  {name:'Saharan dust plume', lat:20.5, lon:2.5, kind:'Dust', icon:'🌪️'},
+  {name:'Sahel dust transport', lat:14.0, lon:8.0, kind:'Dust', icon:'🌫️'},
+  {name:'Central Africa biomass burning', lat:-5.2, lon:21.5, kind:'Smoke', icon:'🔥'},
+  {name:'Gulf of Guinea urban haze', lat:6.5, lon:4.5, kind:'Urban', icon:'🏙️'},
+  {name:'South African industrial corridor', lat:-26.0, lon:28.4, kind:'Industrial', icon:'🏭'}
+];
+
+let activeCategory = 'historical';
+let map, heatGroup, heatOverlay, countryLayer, cityLayer, stationLayer, fireLayer, eventLayer;
+let latestSeries = [];
+let latestHeatCells = [];
+let latestPlotRows = [];
+let activeColorRange = {min:0, max:80};
+let selectedMapPoint = null;
+let selectedPointMarker = null;
+const productLabels = Object.fromEntries(Object.values(categoryConfig).flatMap(c => c.products.map(p => [p.id,p.label])));
+const productUnits = Object.fromEntries(Object.values(categoryConfig).flatMap(c => c.products.map(p => [p.id,p.unit])));
+const colors = {
+  merra2_pm25:'#2ca25f', merra2_cnn_pm25:'#e34a33', washu_pm25:'#756bb1', historical_obs:'#111827',
+  viirs_aod:'#238b8d', viirs_rgb:'#637083', fire_hotspots:'#e6550d', aeronet_aod:'#3182bd', openaq_pm25:'#31a354',
+  geos_fp_ml_pm25:'#0f68a9', forecast_uncertainty:'#8c6bb1', forecast_category:'#fd8d3c', forecast_peak:'#d73027',
+  hindcast_vs_obs:'#0f68a9', forecast_bias:'#d84c4c', rmse_skill:'#756bb1', exceedance_skill:'#2ca25f'
+};
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function dateObj(s){return new Date(s+'T00:00:00Z')}
+function fmtDate(d){return d.toISOString().slice(0,10)}
+function addDays(d,n){const x=new Date(d);x.setUTCDate(x.getUTCDate()+n);return x}
+function addMonths(d,n){const x=new Date(d);x.setUTCMonth(x.getUTCMonth()+n);return x}
+function addYears(d,n){const x=new Date(d);x.setUTCFullYear(x.getUTCFullYear()+n);return x}
+function dropdownCity(){return cities.find(c=>c.name===document.getElementById('citySelect').value)||cities[0]}
+function selectedCity(){return selectedMapPoint || dropdownCity()}
+function selectedCountry(){return document.getElementById('countrySelect').value||'Africa overview'}
+function selectedProduct(){return document.getElementById('productSelect').value}
+function selectedHeatProduct(){return document.getElementById('heatProductSelect').value}
+function pointOnlyMapProduct(product=selectedProduct()){return ['aeronet_aod','historical_obs','openaq_pm25','fire_hotspots'].includes(product)}
+function suppressHeatForSelectedProduct(){return pointOnlyMapProduct(selectedProduct()) || pointOnlyMapProduct(selectedHeatProduct())}
+function frequency(){return document.getElementById('frequencySelect').value}
+function selectedToggles(){return Array.from(document.querySelectorAll('#plotToggleBox input:checked')).map(x=>x.value)}
+function comparisonProducts(){let chosen=selectedToggles();if(frequency && frequency()!=='daily') chosen=chosen.filter(p=>p!=='fire_hotspots');return chosen.length?chosen:[selectedProduct()].filter(p=>frequency()==='daily'||p!=='fire_hotspots')}
+function productValue(v,p){return v[p] ?? v.merra2_cnn_pm25 ?? v.geos_fp_ml_pm25 ?? v.viirs_aod ?? 0}
+function productAxisTitle(products){const units=[...new Set(products.map(p=>productUnits[p]||'value'))];return units.length===1?units[0]:'native units by product'}
+function ensureComparableProducts(products){return (products&&products.length)?products:[selectedProduct()]}
+function monthOf(date){return date.getUTCMonth()+1}
+function yearOf(date){return date.getUTCFullYear()}
+function seededWave(a,b){return Math.sin(a*12.9898 + b*78.233) * 0.5 + 0.5}
+
+function category(pm){
+  if(pm <= 15) return {label:'Within guideline', color:'#2ea36b', pct:18};
+  if(pm <= 35) return {label:'Moderate', color:'#f2b735', pct:42};
+  if(pm <= 55) return {label:'Elevated', color:'#ed7d31', pct:62};
+  if(pm <= 100) return {label:'High', color:'#d84c4c', pct:82};
+  return {label:'Severe episode', color:'#7644b7', pct:96};
+}
+
+function seasonalTerm(city, date){
+  const m = monthOf(date);
+  let dust = 0, smoke = 0, southern = 0, wetClean = 0;
+  if(['Sahel','North Africa'].includes(city.region)) dust = 8*Math.exp(-Math.pow((m-3.0)/2.2,2)) + 5*Math.exp(-Math.pow((m-12.0)/1.8,2));
+  if(['Central Africa','West Africa'].includes(city.region)) smoke = 7*Math.exp(-Math.pow((m-1.3)/2.0,2)) + 5*Math.exp(-Math.pow((m-12.0)/2.0,2));
+  if(city.region === 'Southern Africa') southern = 9*Math.exp(-Math.pow((m-7.0)/2.1,2));
+  wetClean = -4*Math.exp(-Math.pow((m-8.0)/2.7,2));
+  return dust + smoke + southern + wetClean;
+}
+
+function temporalVariation(city,date,hour=12){
+  const doy = Math.floor((date - new Date(Date.UTC(date.getUTCFullYear(),0,0))) / 86400000);
+  const diurnal = 0.14*Math.sin((hour-7)/24*2*Math.PI) + 0.08*Math.sin((hour-19)/24*2*Math.PI);
+  const synoptic = 0.16*Math.sin(doy/5.5 + city.lat/7) + 0.10*Math.cos(doy/11 + city.lon/8);
+  const episodic = 0.18*Math.max(0, Math.sin(doy/17 + city.lon/4));
+  const longTerm = 0.006*(date.getUTCFullYear()-2000) + (city.base>45 ? 0.002*(date.getUTCFullYear()-2000) : 0);
+  return 1 + diurnal + synoptic + episodic + longTerm;
+}
+
+function baseTruth(city,date,hour=12){
+  const base = city.base + seasonalTerm(city,date) + city.pop/18000;
+  return clamp(base * temporalVariation(city,date,hour), 3, 190);
+}
+
+function valuesFor(city,date,hour=12,lead=0){
+  const truePm = baseTruth(city,date,hour);
+  const merra2 = clamp(truePm*0.84 + 3.5*Math.sin(monthOf(date)/12*2*Math.PI + city.lon/10), 2, 150);
+  const cnn = clamp(truePm*0.98 + 2.2*Math.cos(monthOf(date)/12*2*Math.PI + city.lat/8), 3, 180);
+  const washu = clamp(truePm*1.05 + 2.5*Math.sin(city.lon/8) + city.pop/12000, 3, 190);
+  const obs = clamp(cnn + 2.8*Math.sin(hour/4 + city.lat) + 2.0*Math.cos(date.getTime()/86400000/13 + city.lon), 2, 200);
+  const aod = clamp(0.06 + truePm/115 + (city.region==='Sahel'?0.16:0) + 0.06*Math.sin(hour/24*2*Math.PI), 0.03, 2.4);
+  const fireCount = Math.round(clamp((city.region==='Central Africa'||city.region==='West Africa'||city.region==='Southern Africa'?4:1) + 6*Math.max(0, Math.sin(monthOf(date)/12*2*Math.PI + city.lon/10)), 0, 26));
+  const leadGrowth = 1 + 0.03*lead/24;
+  const forecast = clamp(cnn*leadGrowth + 5*Math.sin(lead/72*Math.PI) + 3*Math.cos((hour+lead)/24*2*Math.PI), 2, 220);
+  const uncertainty = clamp(4 + 0.11*lead + truePm*0.05, 3, 28);
+  const bias = forecast - obs;
+  return {merra2_pm25:merra2, merra2_cnn_pm25:cnn, washu_pm25:washu, historical_obs:obs, viirs_aod:aod, viirs_rgb:truePm, fire_hotspots:fireCount, aeronet_aod:aod*0.95, openaq_pm25:obs, geos_fp_ml_pm25:forecast, forecast_uncertainty:uncertainty, forecast_category:category(forecast).pct, forecast_peak:forecast + uncertainty*0.55, hindcast_vs_obs:forecast, forecast_bias:bias, rmse_skill:Math.abs(bias)+uncertainty*0.3, exceedance_skill:clamp(80-Math.abs(bias)*2,45,96)};
+}
+
+function createTimeline(freq,start,end){
+  const rows=[];
+  let s=dateObj(start), e=dateObj(end);
+  if(e<s){const tmp=s;s=e;e=tmp}
+  if(freq==='hourly'){
+    const maxHours = Math.min(Math.ceil((e-s)/3600000)+24, 168);
+    for(let i=0;i<maxHours;i++){const d=new Date(s.getTime()+i*3600000);rows.push({date:d,hour:d.getUTCHours(), label:`${d.toISOString().slice(5,10)} ${String(d.getUTCHours()).padStart(2,'0')}Z`})}
+  } else if(freq==='daily'){
+    const maxDays = Math.min(Math.ceil((e-s)/86400000)+1, 220);
+    for(let i=0;i<maxDays;i++){const d=addDays(s,i);rows.push({date:d,hour:12,label:d.toISOString().slice(0,10)})}
+  } else if(freq==='monthly'){
+    let d=new Date(Date.UTC(s.getUTCFullYear(),s.getUTCMonth(),1));
+    let count=0;
+    while(d<=e && count<96){rows.push({date:new Date(d),hour:12,label:d.toLocaleString('en-US',{month:'short',year:'numeric',timeZone:'UTC'})});d=addMonths(d,1);count++}
+  } else {
+    let y=s.getUTCFullYear();
+    while(y<=e.getUTCFullYear() && y<=2035){const d=new Date(Date.UTC(y,6,1));rows.push({date:d,hour:12,label:String(y)});y++}
+  }
+  return rows;
+}
+
+function valuesForAveragedPeriod(city, freq, t, lead=0){
+  const numericKeys=[
+    'merra2_pm25','merra2_cnn_pm25','washu_pm25','historical_obs','viirs_aod','viirs_rgb','fire_hotspots','aeronet_aod','openaq_pm25',
+    'geos_fp_ml_pm25','forecast_uncertainty','forecast_category','forecast_peak','hindcast_vs_obs','forecast_bias','rmse_skill','exceedance_skill'
+  ];
+  const acc=Object.fromEntries(numericKeys.map(k=>[k,0]));
+  let count=0;
+  const addSample=(d,h)=>{
+    const v=valuesFor(city,d,h,lead);
+    numericKeys.forEach(k=>{acc[k]+=Number(v[k]||0)});
+    count++;
+  };
+  if(freq==='hourly'){
+    addSample(t.date,t.hour);
+  } else if(freq==='daily'){
+    for(let h=0;h<24;h+=3) addSample(t.date,h);
+  } else if(freq==='monthly'){
+    const start=new Date(Date.UTC(t.date.getUTCFullYear(),t.date.getUTCMonth(),1));
+    const end=new Date(Date.UTC(t.date.getUTCFullYear(),t.date.getUTCMonth()+1,1));
+    for(let d=new Date(start); d<end; d=addDays(d,3)) addSample(d,12);
+  } else {
+    for(let m=0;m<12;m++) addSample(new Date(Date.UTC(t.date.getUTCFullYear(),m,15)),12);
+  }
+  numericKeys.forEach(k=>acc[k]=acc[k]/Math.max(count,1));
+  return acc;
+}
+
+function generateSeries(products=null){
+  const city=selectedCity();
+  const freq=frequency();
+  const timeline=createTimeline(freq,document.getElementById('startDate').value,document.getElementById('endDate').value);
+  const prods=products||selectedToggles();
+  const lead=parseInt(document.getElementById('leadSlider').value)||0;
+  return timeline.map(t=>{
+    const v=valuesForAveragedPeriod(city,freq,t,lead);
+    const row={label:t.label,date:fmtDate(t.date),hour:t.hour,city:city.name,country:city.country,frequency:freq,aggregation:aggregationLabel(freq)};
+    prods.forEach(p=>row[p]=roundValue(v[p],p));
+    row.pm25=v.merra2_cnn_pm25;
+    row.aod=v.viirs_aod;
+    row.obs=v.historical_obs;
+    row.forecast=v.geos_fp_ml_pm25;
+    row.bias=v.forecast_bias;
+    return row;
+  });
+}
+
+function aggregationLabel(freq){
+  return ({hourly:'Hourly mean',daily:'Daily mean from 3-hourly samples',monthly:'Monthly mean from daily samples',annual:'Annual mean from monthly samples'})[freq] || 'Mean';
+}
+
+function roundValue(v,p){
+  if(p==='viirs_aod'||p==='aeronet_aod') return Number(v.toFixed(3));
+  if(p==='fire_hotspots'||p==='forecast_category'||p==='exceedance_skill') return Math.round(v);
+  return Number(v.toFixed(1));
+}
+
+function initControls(){
+  const countrySelect=document.getElementById('countrySelect');
+  Object.keys(countryMeta).forEach(c=>{const opt=document.createElement('option');opt.value=c;opt.textContent=c;countrySelect.appendChild(opt)});
+  countrySelect.value='Africa overview';
+  refreshCityOptions();
+  refreshStationOptions();
+  $('#citySelect').select2({width:'100%',placeholder:'Search city'});
+  $('#stationSelect').select2({width:'100%',placeholder:'Select station network'});
+  $('#compareCountrySelect').select2({width:'100%',placeholder:'Select country'});
+  $('#compareCitySelect').select2({width:'100%',placeholder:'Select up to 10 cities',maximumSelectionLength:10});
+  refreshComparisonCityControls();
+  document.querySelectorAll('.analysis-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    document.querySelectorAll('.analysis-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    activeCategory=btn.dataset.category;
+    refreshCategoryPanels(true);
+    updateDashboard(true);
+  }));
+}
+
+function refreshCityOptions(){
+  const country=selectedCountry();
+  const citySelect=document.getElementById('citySelect');
+  const prior=citySelect.value;
+  citySelect.innerHTML='';
+  const list=country==='Africa overview'?cities:cities.filter(c=>c.country===country);
+  list.forEach(c=>{const opt=document.createElement('option');opt.value=c.name;opt.textContent=`${c.name}, ${c.country}`;citySelect.appendChild(opt)});
+  citySelect.value=list.find(c=>c.name===prior)?.name || list[0]?.name || cities[0].name;
+}
+
+function refreshStationOptions(){
+  const stationSelect=document.getElementById('stationSelect');
+  if(!stationSelect) return;
+  const prior=stationSelect.value || 'all';
+  const networks=[
+    {id:'all', label:'All station networks'},
+    {id:'aeronet', label:'AERONET AOD'},
+    {id:'openaq', label:'OpenAQ PM₂.₅'},
+    {id:'airqo', label:'AirQo PM₂.₅'},
+    {id:'embassy', label:'U.S. Embassy PM₂.₅'}
+  ];
+  stationSelect.innerHTML='';
+  networks.forEach(n=>{const opt=document.createElement('option');opt.value=n.id;opt.textContent=n.label;stationSelect.appendChild(opt)});
+  stationSelect.value=networks.find(n=>n.id===prior)?.id || 'all';
+}
+
+function stationNetworkForCity(c){
+  const s=(c.station||'').toLowerCase();
+  if(s.includes('aeronet')) return 'aeronet';
+  if(s.includes('airqo')) return 'airqo';
+  if(s.includes('embassy')) return 'embassy';
+  return 'openaq';
+}
+
+function stationNetworkLabel(id){
+  return ({all:'All station networks',aeronet:'AERONET AOD',openaq:'OpenAQ PM₂.₅',airqo:'AirQo PM₂.₅',embassy:'U.S. Embassy PM₂.₅'})[id] || 'All station networks';
+}
+
+function activePointObservationProduct(){
+  const heat=selectedHeatProduct();
+  const product=selectedProduct();
+  if(pointOnlyMapProduct(heat)) return heat;
+  if(pointOnlyMapProduct(product)) return product;
+  return 'all_observed';
+}
+
+function stationNetworkMatches(c){
+  const selected=document.getElementById('stationSelect')?.value || 'all';
+  const network=stationNetworkForCity(c);
+  if(selected!=='all' && network!==selected) return false;
+  const product=activePointObservationProduct();
+  if(product==='aeronet_aod') return network==='aeronet';
+  if(product==='historical_obs' || product==='openaq_pm25') return network!=='aeronet';
+  if(product==='fire_hotspots') return false;
+  if(product==='all_observed') return true;
+  return true;
+}
+
+function markerColorRange(product){
+  const auto=document.getElementById('toggleAutoRange')?.checked ?? true;
+  if(auto) return computeAutoHeatRange(product);
+  const d=defaultRange(product);
+  if(product===selectedHeatProduct() || product===selectedProduct()){
+    const mn=parseFloat(document.getElementById('colorMinInput')?.value);
+    const mx=parseFloat(document.getElementById('colorMaxInput')?.value);
+    if(Number.isFinite(mn) && Number.isFinite(mx) && mx>mn) return {min:mn,max:mx};
+  }
+  return d;
+}
+
+function markerColorForObservation(product, value){
+  return colorForValue(value, product, markerColorRange(product), selectedColorMapStops());
+}
+
+function stationObservedDisplay(c, valid){
+  const vals=valuesFor(c,valid,12,0);
+  const network=stationNetworkForCity(c);
+  const product=activePointObservationProduct();
+  if(product==='fire_hotspots') return null;
+
+  if(product==='aeronet_aod'){
+    if(network!=='aeronet') return null;
+    const value=vals.aeronet_aod;
+    return {product:'aeronet_aod', label:'AERONET AOD', value, unit:'AOD', color:markerColorForObservation('aeronet_aod', value)};
+  }
+
+  if(network==='aeronet'){
+    const value=vals.aeronet_aod;
+    return {product:'aeronet_aod', label:'AERONET AOD', value, unit:'AOD', color:markerColorForObservation('aeronet_aod', value)};
+  }
+
+  const displayProduct = product==='openaq_pm25' || (product==='all_observed' && activeCategory==='nrt') ? 'openaq_pm25' : 'historical_obs';
+  const value = displayProduct==='openaq_pm25' ? vals.openaq_pm25 : vals.historical_obs;
+  const label = displayProduct==='openaq_pm25' ? 'NRT observed PM₂.₅' : 'Observed PM₂.₅';
+  return {product:displayProduct, label, value, unit:'µg m⁻³', color:markerColorForObservation(displayProduct, value)};
+}
+
+function stationAodColor(v){
+  return markerColorForObservation('aeronet_aod', v);
+}
+
+function stationMarkerRadius(display){
+  if(display.product==='aeronet_aod') return clamp(4.8 + display.value*3.0,4.8,9.0);
+  return clamp(4.8 + display.value/22,4.8,10.0);
+}
+
+function currentPlotOptions(){
+  const cfg=categoryConfig[activeCategory];
+  const freq=frequency ? frequency() : (document.getElementById('frequencySelect')?.value || 'daily');
+  return cfg.plots.filter(p=>{
+    if(p.id==='fireActivity' && freq!=='daily') return false;
+    if(p.id==='annualTrend' && freq==='hourly') return true;
+    return true;
+  });
+}
+
+function refreshPlotOptions(keepOld=true){
+  const cfg=categoryConfig[activeCategory];
+  const plotSel=document.getElementById('plotTypeSelect');
+  if(!plotSel) return;
+  const oldPlot=plotSel.value;
+  plotSel.innerHTML='';
+  currentPlotOptions().forEach(p=>{const opt=document.createElement('option');opt.value=p.id;opt.textContent=p.label;plotSel.appendChild(opt)});
+  if(keepOld && currentPlotOptions().find(p=>p.id===oldPlot)) plotSel.value=oldPlot;
+}
+
+function refreshComparisonCityControls(){
+  const countrySel=document.getElementById('compareCountrySelect');
+  const citySel=document.getElementById('compareCitySelect');
+  if(!countrySel || !citySel) return;
+  const previousCountry=countrySel.value || 'Africa overview';
+  if(countrySel.options.length===0){
+    Object.keys(countryMeta).forEach(c=>{const opt=document.createElement('option');opt.value=c;opt.textContent=c;countrySel.appendChild(opt)});
+  }
+  countrySel.value=countryMeta[previousCountry] ? previousCountry : selectedCountry();
+  const prior=Array.from(citySel.selectedOptions||[]).map(o=>o.value);
+  citySel.innerHTML='';
+  const country=countrySel.value || 'Africa overview';
+  const list=country==='Africa overview'?cities:cities.filter(c=>c.country===country);
+  list.forEach(c=>{const opt=document.createElement('option');opt.value=c.name;opt.textContent=`${c.name}, ${c.country}`;citySel.appendChild(opt)});
+  const chosen=prior.filter(p=>list.find(c=>c.name===p)).slice(0,10);
+  if(chosen.length===0){
+    list.slice(0,Math.min(6,list.length)).forEach(c=>chosen.push(c.name));
+  }
+  $('#compareCitySelect').val(chosen.slice(0,10)).trigger('change.select2');
+}
+function updateCityCompareControlVisibility(){
+  const el=document.getElementById('cityCompareControls');
+  const plotType=document.getElementById('plotTypeSelect')?.value || '';
+  if(!el) return;
+  const show=['cityCompare','ranking'].includes(plotType);
+  el.style.display=show?'block':'none';
+}
+
+
+function refreshCategoryPanels(resetProduct){
+  const cfg=categoryConfig[activeCategory];
+  document.getElementById('workflowTitle').textContent=cfg.title;
+  document.getElementById('workflowDescription').textContent=cfg.description;
+  const pSel=document.getElementById('productSelect');
+  const oldP=pSel.value;
+  pSel.innerHTML='';
+  cfg.products.forEach(p=>{const opt=document.createElement('option');opt.value=p.id;opt.textContent=p.label;pSel.appendChild(opt)});
+  if(!resetProduct && cfg.products.find(p=>p.id===oldP)) pSel.value=oldP;
+  const hSel=document.getElementById('heatProductSelect');
+  const oldH=hSel.value;
+  hSel.innerHTML='';
+  cfg.heatProducts.forEach(id=>{const opt=document.createElement('option');opt.value=id;opt.textContent=productLabels[id];hSel.appendChild(opt)});
+  if(!resetProduct && cfg.heatProducts.includes(oldH)) hSel.value=oldH;
+  refreshPlotOptions(!resetProduct);
+  updateCityCompareControlVisibility();
+  const box=document.getElementById('plotToggleBox');
+  box.innerHTML='';
+  const defaults=cfg.defaultToggles || cfg.toggles.slice(0,3);
+  cfg.toggles.forEach((id)=>{
+    const wrap=document.createElement('div');wrap.className='form-check form-switch';
+    const checked=defaults.includes(id);
+    wrap.innerHTML=`<input class="form-check-input plot-toggle" type="checkbox" id="toggle_${id}" value="${id}" ${checked?'checked':''}><label class="form-check-label" for="toggle_${id}">${productLabels[id]}</label>`;
+    box.appendChild(wrap);
+  });
+  document.querySelectorAll('.nrt-only').forEach(el=>el.classList.toggle('hidden-by-category', activeCategory!=='nrt'));
+  document.querySelectorAll('.forecast-only').forEach(el=>el.classList.toggle('hidden-by-category', !['forecast','evaluation'].includes(activeCategory)));
+  document.querySelectorAll('.evaluation-only').forEach(el=>el.classList.toggle('hidden-by-category', activeCategory!=='evaluation'));
+  refreshComparisonCityControls();
+  updateProductMetadata();
+}
+
+function initMap(){
+  map=L.map('africaMap',{zoomControl:true,preferCanvas:true}).setView([2,20],4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  heatGroup=L.layerGroup().addTo(map);
+  countryLayer=L.layerGroup().addTo(map);
+  cityLayer=L.layerGroup().addTo(map);
+  stationLayer=L.layerGroup().addTo(map);
+  fireLayer=L.layerGroup().addTo(map);
+  eventLayer=L.layerGroup().addTo(map);
+  map.on('click', e=>{if(!document.getElementById('toggleHeat').checked && africaLandMask(e.latlng.lat,e.latlng.lng)) selectMapPoint(e.latlng.lat,e.latlng.lng,'base map');});
+}
+
+
+
+function africaLandMask(lat, lon){
+  if(lon < -18 || lon > 52 || lat < -35 || lat > 38) return false;
+  if(lat > 31 && lon < -10) return false;
+  if(lat < -15 && lon < 8) return false;
+  if(lat < -22 && lon > 37) return false;
+  if(lat > 12 && lon > 38 && lat > (-1.3*lon + 75)) return false;
+  if(lat < -5 && lon > 42) return false;
+  return true;
+}
+
+function heatBase(lat,lon,date){
+  // Fixed physically motivated synthetic PM2.5 field. The values are not controlled
+  // by overlay visibility toggles, so the map values remain consistent
+  // for a given product/date and do not change when overlays are hidden.
+  const m=monthOf(date);
+  let v=10;
+  const dustSeason = 0.85 + 0.30*Math.exp(-Math.pow((m-3.0)/2.3,2)) + 0.18*Math.exp(-Math.pow((m-12.0)/1.8,2));
+  const northDust = 42*Math.exp(-Math.pow((lat-18)/7.4,2)) * Math.exp(-Math.pow((lon-7)/36,2)) * dustSeason;
+  const smokeNorthSeason = 0.35 + 0.75*Math.exp(-Math.pow((m-1.5)/2.2,2)) + 0.45*Math.exp(-Math.pow((m-12)/1.8,2));
+  const smokeSouthSeason = 0.25 + 0.90*Math.exp(-Math.pow((m-8.0)/2.4,2));
+  const smokeNorth = 15*Math.exp(-Math.pow((lat-6)/6.0,2)) * Math.exp(-Math.pow((lon-8)/20,2)) * smokeNorthSeason;
+  const smokeSouth = 24*Math.exp(-Math.pow((lat+6)/8,2)) * Math.exp(-Math.pow((lon-23)/19,2)) * smokeSouthSeason;
+  const industrial = 21*Math.exp(-Math.pow((lat+26)/4.3,2))*Math.exp(-Math.pow((lon-28)/6,2));
+  const coastalHaze = 10*Math.exp(-Math.pow((lat-5.5)/4.5,2))*Math.exp(-Math.pow((lon-3.5)/7.5,2));
+  const urban = cities.reduce((acc,c)=>acc + (c.base/10.5)*Math.exp(-((lat-c.lat)*(lat-c.lat)+(lon-c.lon)*(lon-c.lon))/4.1),0);
+  const seasonalWave = 6*Math.sin(m/12*2*Math.PI + lon/10) + 4*Math.cos(lat/8);
+  v += northDust + smokeNorth + smokeSouth + industrial + coastalHaze + urban + seasonalWave;
+  return clamp(v,2,185);
+}
+
+function heatValue(lat,lon){
+  const date=dateObj(document.getElementById('validDate').value);
+  const product=selectedHeatProduct();
+  const lead=parseInt(document.getElementById('leadSlider').value)||0;
+  const pm=heatBase(lat,lon,date);
+  if(product.includes('aod')) return clamp(0.04 + pm/125 + 0.20*Math.exp(-Math.pow((lat-18)/7.4,2))*Math.exp(-Math.pow((lon-7)/36,2)),0.03,2.4);
+  if(product==='fire_hotspots') return clamp(pm/7 + 5*Math.max(0,Math.sin(monthOf(date)/12*2*Math.PI + lon/10)),0,40);
+  if(product==='forecast_uncertainty') return clamp(4 + pm*0.05 + 0.10*lead,3,28);
+  if(product==='forecast_peak') return clamp(pm + 12 + 0.25*lead + 6*Math.sin(lon/6),5,220);
+  if(product==='geos_fp_ml_pm25') return clamp(pm + 5*Math.sin(lead/72*Math.PI) + 4*Math.cos(lon/8),3,210);
+  if(product==='forecast_bias') return clamp(0.22*pm + 7*Math.sin(lon/6) - 3*Math.cos(lat/7),-25,35);
+  if(product==='hindcast_vs_obs') return clamp(pm + 5*Math.sin(lon/7),3,200);
+  if(product==='washu_pm25') return clamp(pm*1.06 + 2*Math.sin(lon),3,200);
+  if(product==='merra2_pm25') return clamp(pm*0.84 + 3*Math.cos(lat/10),2,160);
+  if(product==='openaq_pm25') return clamp(pm*0.97 + 5*Math.sin(lat/4),2,190);
+  return clamp(pm*0.98,3,190);
+}
+
+
+function scientificStops(product){
+  // Category-anchored fixed scales. The labels show absolute values, while the
+  // piecewise normalization below allocates enough visual space to each category.
+  // This prevents the whole Africa map from staying blue when values cluster in
+  // the lower-to-moderate part of a wide physical range.
+  if(product.includes('aod')||product==='aeronet_aod'){
+    return {
+      breaks:[0.03,0.15,0.35,0.65,1.00,1.50,2.00],
+      labels:['0.03','0.15','0.35','0.65','1.00','1.50','≥2.00'],
+      cats:['Clean','Low','Moderate','High','Very high','Extreme','Max'],
+      positions:[0.00,0.16,0.34,0.52,0.68,0.84,1.00]
+    };
+  }
+  if(product==='forecast_bias'){
+    return {
+      breaks:[-25,-12,-3,0,3,12,35],
+      labels:['≤-25','-12','-3','0','+3','+12','≥+35'],
+      cats:['Strong under','Under','Slight under','Neutral','Slight over','Over','Strong over'],
+      positions:[0.00,0.16,0.35,0.50,0.64,0.82,1.00]
+    };
+  }
+  if(product==='forecast_uncertainty'){
+    return {
+      breaks:[3,5,8,12,17,23,30],
+      labels:['3','5','8','12','17','23','≥30'],
+      cats:['Very low','Low','Moderate','Elevated','High','Very high','Extreme'],
+      positions:[0.00,0.16,0.34,0.52,0.68,0.84,1.00]
+    };
+  }
+  if(product==='fire_hotspots'){
+    return {
+      breaks:[0,3,7,12,20,30,45],
+      labels:['0','3','7','12','20','30','≥45'],
+      cats:['None','Low','Moderate','Active','High','Very high','Extreme'],
+      positions:[0.00,0.16,0.34,0.52,0.68,0.84,1.00]
+    };
+  }
+  return {
+    // PM2.5 category anchors. Daily PM2.5 uses EPA-like breakpoints for a
+    // realistic public-facing interpretation, while annual/yearly plots are still
+    // synthetic and for dashboard-design purposes only.
+    breaks:[0,9.0,35.4,55.4,125.4,225.4,325.4],
+    labels:['0','9','35','55','125','225','≥325'],
+    cats:['Good','Moderate','USG','Unhealthy','Very unhealthy','Hazardous','Extreme'],
+    positions:[0.00,0.17,0.40,0.58,0.75,0.90,1.00]
+  };
+}
+
+function productValueRange(product){
+  const meta=scientificStops(product);
+  return [meta.breaks[0], meta.breaks[meta.breaks.length-1]];
+}
+
+function normalizeForColor(val, product){
+  const meta=scientificStops(product);
+  const breaks=meta.breaks;
+  const pos=meta.positions || breaks.map((_,i)=>i/(breaks.length-1));
+  if(val<=breaks[0]) return pos[0];
+  for(let i=1;i<breaks.length;i++){
+    if(val<=breaks[i]){
+      const f=(val-breaks[i-1])/(breaks[i]-breaks[i-1] || 1);
+      return clamp(pos[i-1] + f*(pos[i]-pos[i-1]),0,1);
+    }
+  }
+  return pos[pos.length-1];
+}
+
+
+const colorMapStops = {
+  turbo:[[0.00,'#30123b'],[0.10,'#4145ab'],[0.22,'#2b91d1'],[0.34,'#23c7aa'],[0.47,'#7ad151'],[0.60,'#fde725'],[0.72,'#fca636'],[0.86,'#e6502e'],[1.00,'#7a0403']],
+  jet:[[0.00,'#00007f'],[0.12,'#0000ff'],[0.25,'#007fff'],[0.38,'#00ffff'],[0.50,'#7fff7f'],[0.62,'#ffff00'],[0.75,'#ffb000'],[0.88,'#ff3b00'],[1.00,'#7f0000']],
+  viridis:[[0.00,'#440154'],[0.20,'#414487'],[0.40,'#2a788e'],[0.60,'#22a884'],[0.80,'#7ad151'],[1.00,'#fde725']],
+  plasma:[[0.00,'#0d0887'],[0.20,'#6a00a8'],[0.40,'#b12a90'],[0.60,'#e16462'],[0.80,'#fca636'],[1.00,'#f0f921']],
+  inferno:[[0.00,'#000004'],[0.18,'#320a5a'],[0.36,'#781c6d'],[0.54,'#bb3754'],[0.72,'#ed6925'],[0.88,'#fbb61a'],[1.00,'#fcffa4']],
+  airquality:[[0.00,'#1a9850'],[0.22,'#91cf60'],[0.42,'#ffffbf'],[0.60,'#fdae61'],[0.78,'#d73027'],[1.00,'#762a83']],
+  bluered:[[0.00,'#2166ac'],[0.25,'#67a9cf'],[0.50,'#f7f7f7'],[0.75,'#ef8a62'],[1.00,'#b2182b']]
+};
+
+function hexToRgb(hex){
+  const h=hex.replace('#','');
+  return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)};
+}
+
+function lerp(a,b,t){return a+(b-a)*t}
+
+function rgbToHex(rgb){
+  const toHex=v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0');
+  return '#'+toHex(rgb.r)+toHex(rgb.g)+toHex(rgb.b);
+}
+
+function selectedColorMapStops(){
+  const name=document.getElementById('colorMapSelect')?.value || 'turbo';
+  return colorMapStops[name] || colorMapStops.turbo;
+}
+
+function interpolateColorMap(t, stops){
+  t=clamp(t,0,1);
+  for(let i=1;i<stops.length;i++){
+    if(t<=stops[i][0]){
+      const [t0,c0]=stops[i-1], [t1,c1]=stops[i];
+      const f=(t-t0)/(t1-t0 || 1);
+      const a=hexToRgb(c0), b=hexToRgb(c1);
+      return {r:Math.round(lerp(a.r,b.r,f)),g:Math.round(lerp(a.g,b.g,f)),b:Math.round(lerp(a.b,b.b,f))};
+    }
+  }
+  return hexToRgb(stops[stops.length-1][1]);
+}
+
+function defaultRange(product){
+  // Product-specific display ranges used for the quantitative map legend,
+  // point-observation legends, and optional custom color-scale inputs.
+  // These prevent AOD, PM2.5, fire count, uncertainty, and bias products
+  // from inheriting each other's units or numerical ranges.
+  if(product==='viirs_aod' || product==='aeronet_aod') return {min:0.00,max:2.00};
+  if(product==='fire_hotspots') return {min:0,max:40};
+  if(product==='forecast_bias') return {min:-30,max:30};
+  if(product==='forecast_uncertainty') return {min:0,max:30};
+  if(product==='forecast_category' || product==='exceedance_skill') return {min:0,max:100};
+  if(product==='rmse_skill') return {min:0,max:45};
+  if(product==='geos_fp_ml_pm25' || product==='hindcast_vs_obs') return {min:0,max:200};
+  if(product==='merra2_pm25' || product==='merra2_cnn_pm25' || product==='washu_pm25' || product==='historical_obs' || product==='openaq_pm25') return {min:0,max:150};
+  return {min:0,max:100};
+}
+
+function isAodProduct(product){
+  return product==='viirs_aod' || product==='aeronet_aod';
+}
+
+function isPm25Product(product){
+  return product==='merra2_pm25' || product==='merra2_cnn_pm25' || product==='washu_pm25' || product==='historical_obs' || product==='openaq_pm25' || product==='geos_fp_ml_pm25' || product==='hindcast_vs_obs';
+}
+
+function pointObservationValues(product){
+  const valid=dateObj(document.getElementById('validDate')?.value || '2026-02-18');
+  if(product==='fire_hotspots'){
+    // Fire hotspots are point events. Keep the legend in event-count space,
+    // not PM2.5 or AOD space.
+    return syntheticFires().map(f=>f.power).filter(Number.isFinite);
+  }
+  return cities.filter(c=>stationNetworkMatches(c)).map(c=>{
+    const v=valuesFor(c,valid,12,0);
+    if(product==='aeronet_aod' || product==='viirs_aod') return product==='aeronet_aod' ? v.aeronet_aod : v.viirs_aod;
+    if(product==='openaq_pm25') return v.openaq_pm25;
+    if(product==='historical_obs') return v.historical_obs;
+    return v[product];
+  }).filter(Number.isFinite);
+}
+
+function computeAutoHeatRange(product){
+  const d=defaultRange(product);
+
+  // For point-observation products, derive the auto range from the point values
+  // themselves, then constrain it within the scientifically meaningful product range.
+  if(pointOnlyMapProduct(product)){
+    const vals=pointObservationValues(product);
+    if(!vals.length) return d;
+    let mn=Math.min(...vals), mx=Math.max(...vals);
+    if(Math.abs(mx-mn)<1e-6){
+      mn=d.min;
+      mx=d.max;
+    }else{
+      const pad=(mx-mn)*0.12 || 1;
+      mn=mn-pad;
+      mx=mx+pad;
+    }
+    mn=Math.max(d.min,mn);
+    mx=Math.min(d.max,mx);
+    if(mx<=mn){mx=d.max;mn=d.min;}
+    // AERONET and VIIRS AOD should never display PM2.5-like ranges.
+    if(isAodProduct(product)){mn=Math.max(0,mn);mx=Math.min(2.0,Math.max(mx,0.25));}
+    // Fire hotspot color legend should stay in count/intensity space.
+    if(product==='fire_hotspots'){mn=0;mx=Math.max(10,Math.min(40,Math.ceil(mx)));}
+    return {min:mn,max:mx};
+  }
+
+  let mn=Infinity, mx=-Infinity;
+  for(let lat=-34.5; lat<=37.5; lat+=1.2){
+    for(let lon=-17.5; lon<=51.5; lon+=1.2){
+      if(!africaLandMask(lat,lon)) continue;
+      const v=heatValue(lat,lon);
+      if(Number.isFinite(v)){mn=Math.min(mn,v);mx=Math.max(mx,v);}
+    }
+  }
+  if(!Number.isFinite(mn)||!Number.isFinite(mx)||Math.abs(mx-mn)<1e-6){
+    mn=d.min;mx=d.max;
+  }
+  const pad=(mx-mn)*0.05 || 1;
+  mn=mn-pad; mx=mx+pad;
+  mn=Math.max(d.min,mn);
+  mx=Math.min(d.max,mx);
+  if(mx<=mn){mn=d.min;mx=d.max;}
+  if(product==='forecast_bias'){mn=Math.max(d.min,mn);mx=Math.min(d.max,mx);}
+  return {min:mn,max:mx};
+}
+
+function getColorRange(product){
+  const auto=document.getElementById('toggleAutoRange')?.checked ?? true;
+  let r;
+  if(auto){
+    r=computeAutoHeatRange(product);
+    const minEl=document.getElementById('colorMinInput'), maxEl=document.getElementById('colorMaxInput');
+    if(minEl) minEl.value=roundValue(r.min,product);
+    if(maxEl) maxEl.value=roundValue(r.max,product);
+  }else{
+    const d=defaultRange(product);
+    const mn=parseFloat(document.getElementById('colorMinInput')?.value);
+    const mx=parseFloat(document.getElementById('colorMaxInput')?.value);
+    r={min:Number.isFinite(mn)?mn:d.min,max:Number.isFinite(mx)?mx:d.max};
+    if(r.max<=r.min){r.max=r.min+1;}
+  }
+  activeColorRange=r;
+  return r;
+}
+
+function colorT(val, range){
+  return clamp((val-range.min)/(range.max-range.min || 1),0,1);
+}
+
+function colorForValue(val,product,range=activeColorRange,stops=selectedColorMapStops()){
+  return rgbToHex(interpolateColorMap(colorT(val,range),stops));
+}
+
+function ramp(v,breaks,cols){
+  if(v<=breaks[0]) return cols[0];
+  for(let i=1;i<breaks.length;i++){if(v<=breaks[i]) return cols[Math.min(i,cols.length-1)]}
+  return cols[cols.length-1];
+}
+
+function heatIntensity(val, product){
+  return clamp(colorT(val,activeColorRange),0.04,1.0);
+}
+
+function heatGradient(product){
+  const stops=selectedColorMapStops();
+  const out={};
+  stops.forEach(([t,c])=>{out[t.toFixed(3)]=c});
+  return out;
+}
+
+function legendTicks(product){
+  const r=activeColorRange || defaultRange(product);
+  const ticks=[0,0.25,0.5,0.75,1].map(f=>r.min + f*(r.max-r.min));
+  return ticks.map(v=>roundValue(v,product));
+}
+
+function drawHeatCanvas(product, opacity){
+  const bounds=[[-35,-18],[38,52]];
+  const width=900, height=940;
+  const canvas=document.createElement('canvas');
+  canvas.width=width; canvas.height=height;
+  const ctx=canvas.getContext('2d', {willReadFrequently:false});
+  const img=ctx.createImageData(width,height);
+  const validDate=dateObj(document.getElementById('validDate').value);
+  const smoothAlpha=Math.round(238*opacity);
+  const range=activeColorRange || getColorRange(product);
+  const stops=selectedColorMapStops();
+  for(let y=0;y<height;y++){
+    const lat=38 - (y/(height-1))*(38-(-35));
+    for(let x=0;x<width;x++){
+      const lon=-18 + (x/(width-1))*(52-(-18));
+      const idx=(y*width+x)*4;
+      if(!africaLandMask(lat,lon)){
+        img.data[idx+3]=0;
+        continue;
+      }
+      const val=heatValue(lat,lon);
+      const rgb=interpolateColorMap(colorT(val,range), stops);
+      img.data[idx]=rgb.r;
+      img.data[idx+1]=rgb.g;
+      img.data[idx+2]=rgb.b;
+      img.data[idx+3]=smoothAlpha;
+    }
+  }
+  ctx.putImageData(img,0,0);
+
+  // Slight smoothing removes pixel artifacts while preserving sharp scientific contrast.
+  const smoothCanvas=document.createElement('canvas');
+  smoothCanvas.width=width; smoothCanvas.height=height;
+  const sctx=smoothCanvas.getContext('2d');
+  sctx.imageSmoothingEnabled=true;
+  sctx.filter='saturate(1.35) contrast(1.15)';
+  sctx.drawImage(canvas,0,0);
+  return {url:smoothCanvas.toDataURL('image/png'), bounds};
+}
+
+function updateHeatMap(){
+  heatGroup.clearLayers();
+  latestHeatCells=[];
+  const heatSuppressed=suppressHeatForSelectedProduct();
+  if(!document.getElementById('toggleHeat').checked || heatSuppressed){updateLegend();return}
+  const product=selectedHeatProduct();
+  const opacity=(parseInt(document.getElementById('opacitySlider').value)||78)/100;
+  getColorRange(product);
+  const showInspection=document.getElementById('toggleGrid').checked;
+
+  // Robust scientific raster overlay: colors are computed from absolute values once
+  // and then drawn as a fixed image over Africa. This avoids the zoom-dependent color
+  // scaling and disappearance that can occur with point-density heat layers.
+  const rendered=drawHeatCanvas(product, opacity);
+  heatOverlay=L.imageOverlay(rendered.url, rendered.bounds, {opacity:1.0, interactive:true, className:'aaqe-heat-raster'}).addTo(heatGroup);
+  heatOverlay.on('click', function(e){
+    const lat=e.latlng.lat, lon=e.latlng.lng;
+    if(!africaLandMask(lat,lon)) return;
+    selectMapPoint(lat,lon,'heat map');
+    const val=roundValue(heatValue(lat,lon),product);
+    const point=selectedMapPoint;
+    L.popup().setLatLng(e.latlng).setContent(`<b>${productLabels[product]}</b><br>${point.name}<br>Country context: ${point.country}<br>Lat: ${lat.toFixed(2)}, Lon: ${lon.toFixed(2)}<br>Value: ${val} ${productUnits[product]||''}<br><a href="#" onclick="resetPointSelection();return false;">Reset to Africa overview plots</a>`).openOn(map);
+  });
+
+  // CSV/download and optional inspection points are sampled separately from the full raster.
+  let n=0;
+  const sampleStep=0.75;
+  for(let lat=-34.6;lat<=37.4;lat+=sampleStep){
+    for(let lon=-17.6;lon<=51.6;lon+=sampleStep){
+      const clat=lat + 0.12*Math.sin((lon+lat)*0.7);
+      const clon=lon + 0.12*Math.cos((lon-lat)*0.6);
+      if(!africaLandMask(clat,clon)) continue;
+      const val=heatValue(clat,clon);
+      const rounded=roundValue(val,product);
+      latestHeatCells.push({lat:Number(clat.toFixed(2)),lon:Number(clon.toFixed(2)),product,value:rounded});
+      if(showInspection && n%15===0){
+        const dot=L.circleMarker([clat,clon],{radius:2.4,stroke:true,color:'#ffffff',weight:0.4,fillColor:colorForValue(val,product),fillOpacity:0.92,interactive:true});
+        dot.bindPopup(`<b>${productLabels[product]}</b><br>Lat: ${clat.toFixed(2)}, Lon: ${clon.toFixed(2)}<br>Value: ${rounded} ${productUnits[product]||''}`);
+        dot.on('click',()=>selectMapPoint(clat,clon,'inspection point'));
+        dot.addTo(heatGroup);
+      }
+      n++;
+    }
+  }
+  updateLegend();
+}
+
+function updateMarkers(){
+  cityLayer.clearLayers();stationLayer.clearLayers();fireLayer.clearLayers();eventLayer.clearLayers();
+  const valid=dateObj(document.getElementById('validDate').value);
+  const showObservedStations=document.getElementById('toggleCities').checked;
+  const product=selectedProduct();
+  const pointProduct=activePointObservationProduct();
+  const showFires=showObservedStations && activeCategory==='nrt' && (product==='fire_hotspots' || selectedHeatProduct()==='fire_hotspots' || document.getElementById('toggleFires')?.checked);
+  const showEvents=document.getElementById('toggleEvents').checked;
+
+  /* Observed values are shown on station points. Station-marker colors now use the
+     selected color map and the product-specific observed-value range, so PM₂.₅ and
+     AOD points update together with the heat-map color-map selector. */
+  if(showObservedStations && pointProduct!=='fire_hotspots'){cities.filter(c=>stationNetworkMatches(c)).forEach(c=>{
+    const display=stationObservedDisplay(c,valid);
+    if(!display) return;
+    const network=stationNetworkForCity(c);
+    const valueText = display.product==='aeronet_aod' ? display.value.toFixed(2) : display.value.toFixed(1);
+    const st=L.circleMarker([c.lat,c.lon],{
+      radius:stationMarkerRadius(display),
+      color:'#102033',
+      weight:1.25,
+      fillColor:display.color,
+      fillOpacity:.93
+    }).bindPopup(`<b>${c.station}</b><br>${stationNetworkLabel(network)}<br>${c.name}, ${c.country}<br>${display.label}: ${valueText} ${display.unit}<br>Network filter: ${stationNetworkLabel(document.getElementById('stationSelect')?.value || 'all')}<br><a href="#" onclick="selectStationFromMap('${c.name.replace(/'/g,"\'")}');return false;">Open station</a>`);
+    st.on('click',()=>selectStationFromMap(c.name));
+    st.addTo(stationLayer);
+  })}
+
+  if(showFires){syntheticFires().forEach(f=>{
+    const hotspot=L.circleMarker([f.lat,f.lon],{radius:f.power,color:'#4b003c',weight:1.35,fillColor:'#ff00b7',fillOpacity:.90})
+      .bindPopup(`<b>Synthetic VIIRS-style fire hotspot</b><br>Cluster: ${f.cluster}<br>Fire class: ${f.power>7?'High':f.power>5?'Moderate':'Low'}<br><a href="#" onclick="selectMapPoint(${f.lat.toFixed(4)},${f.lon.toFixed(4)},'fire hotspot');return false;">Plot this hotspot area</a>`);
+    hotspot.on('click',()=>selectMapPoint(f.lat,f.lon,'fire hotspot'));
+    hotspot.addTo(fireLayer)
+  })}
+  if(showEvents){dynamicEvents().forEach(e=>{
+    const icon=L.divIcon({className:'event-label',html:`${e.icon} ${e.kind}`,iconSize:null});
+    const marker=L.marker([e.lat,e.lon],{icon}).bindPopup(`<b>${e.name}</b><br>${e.description}<br>Evidence: ${e.evidence}<br><a href="#" onclick="selectMapPoint(${e.lat.toFixed(4)},${e.lon.toFixed(4)},'event');return false;">Plot event location</a>`);
+    marker.on('click',()=>selectMapPoint(e.lat,e.lon,'event'));
+    marker.addTo(eventLayer)
+  })}
+  updateMapChips();
+}
+
+function fireSeasonFactor(lat,date){
+  const m=monthOf(date);
+  if(lat>=0) return 0.30 + 0.95*Math.exp(-Math.pow((m-1.5)/2.0,2)) + 0.55*Math.exp(-Math.pow((m-12)/1.8,2));
+  return 0.20 + 1.00*Math.exp(-Math.pow((m-8.0)/2.2,2));
+}
+
+function syntheticFires(){
+  const valid=dateObj(document.getElementById('validDate').value);
+  const clusters=[
+    {name:'West Africa dry-season fires',lat:8,lon:4,n:30,spread:7},
+    {name:'Central Africa biomass burning',lat:-6,lon:23,n:38,spread:8},
+    {name:'Angola/Zambia fire belt',lat:-12,lon:19,n:28,spread:7},
+    {name:'South African Highveld fires',lat:-25,lon:29,n:12,spread:4}
+  ];
+  const pts=[];
+  clusters.forEach((cl,ci)=>{
+    const seasonal=fireSeasonFactor(cl.lat,valid);
+    const n=Math.round(cl.n*seasonal);
+    if(n<6) return;
+    for(let i=0;i<n;i++){
+      const lat=cl.lat+Math.sin(i*1.7+ci)*cl.spread*.45+0.45*Math.cos(i);
+      const lon=cl.lon+Math.cos(i*2.1+ci)*cl.spread*.55+0.35*Math.sin(i*.5);
+      if(africaLandMask(lat,lon))pts.push({lat,lon,power:3+((i+ci)%6),cluster:cl.name})
+    }
+  });
+  return pts;
+}
+
+function dynamicEvents(){
+  const valid=dateObj(document.getElementById('validDate').value);
+  const events=[];
+  const aodSahel=heatValue(18,7); // with selected heat product, so compute explicit AOD below
+  const dustAod=clamp(0.04 + heatBase(18,7,valid)/125 + 0.20,0.03,2.4);
+  if(dustAod>=0.55){
+    events.push({name:'Saharan/Sahel dust episode',lat:18.2,lon:7.0,kind:'Dust',icon:'🌪️',description:'Dust callout appears because the synthetic AOD field is high over the Saharan/Sahel belt.',evidence:`AOD ≈ ${dustAod.toFixed(2)} at event core`});
+  }
+  const fires=syntheticFires();
+  const central=fires.filter(f=>f.cluster.includes('Central Africa'));
+  const west=fires.filter(f=>f.cluster.includes('West Africa'));
+  if(central.length>=18){
+    const lat=central.reduce((a,b)=>a+b.lat,0)/central.length, lon=central.reduce((a,b)=>a+b.lon,0)/central.length;
+    events.push({name:'Central Africa biomass-burning episode',lat,lon,kind:'Fire/smoke',icon:'🔥',description:'Fire/smoke callout appears only where many fire hotspots are clustered nearby.',evidence:`${central.length} synthetic VIIRS-style hotspots`});
+  }
+  if(west.length>=18){
+    const lat=west.reduce((a,b)=>a+b.lat,0)/west.length, lon=west.reduce((a,b)=>a+b.lon,0)/west.length;
+    events.push({name:'West Africa fire activity',lat,lon,kind:'Fire',icon:'🔥',description:'Fire callout appears where hotspot density is high enough to support an event label.',evidence:`${west.length} synthetic VIIRS-style hotspots`});
+  }
+  const urbanCities=cities.map(c=>({c,v:valuesFor(c,valid,12,0)})).filter(o=>o.v.merra2_cnn_pm25>=55).sort((a,b)=>b.v.merra2_cnn_pm25-a.v.merra2_cnn_pm25).slice(0,2);
+  urbanCities.forEach(o=>events.push({name:`High-PM₂.₅ urban episode near ${o.c.name}`,lat:o.c.lat,lon:o.c.lon,kind:'Urban PM₂.₅',icon:'🏙️',description:'Urban callout appears only where the selected city-level PM₂.₅ exceeds an elevated threshold.',evidence:`PM₂.₅ ≈ ${o.v.merra2_cnn_pm25.toFixed(1)} µg m⁻³`}));
+  return events;
+}
+
+
+
+
+function nearestCityTo(lat,lon){
+  let best=cities[0], bestD=Infinity;
+  cities.forEach(c=>{const d=(lat-c.lat)*(lat-c.lat)+(lon-c.lon)*(lon-c.lon);if(d<bestD){bestD=d;best=c}});
+  return best;
+}
+
+function makeSyntheticPoint(lat,lon,source='map point'){
+  const near=nearestCityTo(lat,lon);
+  const valid=dateObj(document.getElementById('validDate').value);
+  const pm=heatBase(lat,lon,valid);
+  const name = source==='station' ? `Station near ${near.name}` : `Selected point near ${near.name}`;
+  return {
+    name,
+    country: near.country,
+    lat, lon,
+    base: clamp(pm, 8, 85),
+    pop: Math.max(100, Math.round((near.pop||1000)*0.35)),
+    region: near.region,
+    type: `${source} · nearest city context: ${near.name}`,
+    station: source==='station' ? near.station : 'Synthetic selected grid point',
+    isMapPoint: source!=='city',
+    nearestCity: near.name
+  };
+}
+
+function makeCountryPoint(name){
+  const meta=countryMeta[name]||countryMeta['Africa overview'];
+  const related=cities.filter(c=>c.country===name);
+  const avgBase=related.length?related.reduce((a,c)=>a+c.base,0)/related.length:35;
+  const near=related[0]||nearestCityTo(meta.center[0],meta.center[1]);
+  return {
+    name:`${name} country average`,country:name,lat:meta.center[0],lon:meta.center[1],base:clamp(avgBase,8,85),
+    pop:related.reduce((a,c)=>a+(c.pop||0),0)||near.pop,region:near.region,type:'Country-level synthetic average',station:'Country aggregate',
+    isMapPoint:true,isCountryAggregate:true,nearestCity:near.name
+  };
+}
+
+function setSelectionMarker(lat,lon){
+  if(selectedPointMarker) map.removeLayer(selectedPointMarker);
+  const icon=L.divIcon({className:'map-point-marker',html:'',iconSize:[18,18],iconAnchor:[9,9]});
+  selectedPointMarker=L.marker([lat,lon],{icon,interactive:false}).addTo(map);
+}
+
+function selectMapPoint(lat,lon,source='map point'){
+  selectedMapPoint=makeSyntheticPoint(lat,lon,source);
+  const focusEl=document.getElementById('focusSelect');
+  if(focusEl) focusEl.value='point';
+  setSelectionMarker(lat,lon);
+  updateDashboard(false);
+  showToast(`Plots updated for ${selectedMapPoint.name} (${lat.toFixed(2)}, ${lon.toFixed(2)})`);
+}
+
+function selectStationFromMap(cityName){
+  const c=cities.find(x=>x.name===cityName);
+  if(c){selectMapPoint(c.lat,c.lon,'station');}
+}
+
+function resetPointSelection(){
+  selectedMapPoint=null;
+  if(selectedPointMarker){map.removeLayer(selectedPointMarker);selectedPointMarker=null;}
+  document.getElementById('focusSelect').value='africa';
+  updateDashboard(true);
+  showToast('Reset to Africa overview plots.');
+}
+
+function clearPointSelectionSilently(){
+  selectedMapPoint=null;
+  if(selectedPointMarker){map.removeLayer(selectedPointMarker);selectedPointMarker=null;}
+}
+
+function updateLegend(){
+  const legend=document.getElementById('mapLegend');
+  const show=document.getElementById('toggleColorbar')?.checked ?? true;
+  if(legend) legend.style.display=show?'block':'none';
+  const heatSuppressed=suppressHeatForSelectedProduct();
+  const pointProduct = pointOnlyMapProduct(selectedProduct()) ? selectedProduct() : (pointOnlyMapProduct(selectedHeatProduct()) ? selectedHeatProduct() : null);
+  const product=heatSuppressed ? (pointProduct || selectedHeatProduct()) : selectedHeatProduct();
+  // Always refresh the product-specific color range before rendering the legend.
+  // This keeps AOD, PM2.5, fire count, uncertainty, and bias legends from
+  // inheriting stale ranges from the previously selected product.
+  getColorRange(product);
+  const unit=productUnits[product]||'';
+  document.getElementById('legendTitle').textContent=heatSuppressed ? `${productLabels[product]||'Point observations'} points` : (productLabels[product]||'Heat map');
+  document.getElementById('legendUnit').textContent=unit;
+  const rampEl=document.getElementById('legendRamp');
+  const grad=heatGradient(product);
+  const stops=Object.entries(grad).map(([k,c])=>`${c} ${Math.round(parseFloat(k)*100)}%`).join(',');
+  const legendGradient=`linear-gradient(90deg,${stops})`;
+  // Use an inline !important style so the dynamic legend overrides the compact-panel
+  // CSS rule that otherwise fixes the legend ramp background.
+  rampEl.style.setProperty('background', legendGradient, 'important');
+  rampEl.style.setProperty('background-image', legendGradient, 'important');
+  const ticks=legendTicks(product);
+  document.getElementById('legendLabels').innerHTML=ticks.map((lab,i)=>{
+    const lbl=['Min','25%','Mid','75%','Max'][i] || '';
+    return `<span>${lab}<small>${lbl}</small></span>`;
+  }).join('');
+  const pmRef=document.getElementById('pmReference');
+  const isPM = isPm25Product(product);
+  if(pmRef){
+    pmRef.style.display='block';
+    if(product==='forecast_bias'){
+      pmRef.innerHTML = '<strong>Bias reference:</strong> Negative values indicate forecast underestimation, positive values indicate overestimation, in µg m⁻³.';
+    }else if(product==='forecast_uncertainty'){
+      pmRef.innerHTML = '<strong>Uncertainty reference:</strong> Display range is 0–30 µg m⁻³ for synthetic forecast spread.';
+    }else if(isAodProduct(product)){
+      pmRef.innerHTML = '<strong>AOD reference:</strong> Aerosol optical depth is unitless. Clean conditions are often below about 0.2, while dust/smoke events can exceed 1.0.';
+    }else if(product==='fire_hotspots'){
+      pmRef.innerHTML = '<strong>Fire hotspot reference:</strong> Values are point-event counts/intensity classes for active fire detections, not PM₂.₅ or AOD.';
+    }else if(isPM){
+      pmRef.innerHTML = '<strong>PM₂.₅ category reference:</strong> Good 0–9, Moderate 9.1–35.4, USG 35.5–55.4, Unhealthy 55.5–125.4, Very unhealthy 125.5–225.4, Hazardous ≥225.5 µg m⁻³.';
+    }else{
+      pmRef.innerHTML = '<strong>Product reference:</strong> Color scale and units follow the selected product.';
+    }
+  }
+  const cmapName=document.getElementById('colorMapSelect')?.selectedOptions?.[0]?.textContent || 'selected colormap';
+  const mode=(document.getElementById('toggleAutoRange')?.checked ?? true)?'auto min-max':'custom min-max';
+  if(heatSuppressed){
+    document.getElementById('legendNote').textContent=product==='fire_hotspots'
+      ? 'Fire hotspots are displayed as distinct magenta point markers. No heat map is shown for this ground-observation product.'
+      : `Point observations only for ${productLabels[product]}. No heat map is shown for this station-observation product.`;
+  } else {
+    document.getElementById('legendNote').textContent=document.getElementById('toggleHeat').checked?`Quantitative ${mode} scale using ${cmapName}. Range: ${ticks[0]} to ${ticks[ticks.length-1]} ${unit||'native units'}.`:'Heat map is currently hidden.';
+  }
+}
+
+function plotFocusText(){
+  const c=selectedCity();
+  if(selectedMapPoint) return `<br><sup>${selectedMapPoint.isCountryAggregate?'Country aggregate':'Selected focus'}: ${c.name}, ${c.country} (${c.lat.toFixed(2)}, ${c.lon.toFixed(2)})</sup>`;
+  if(document.getElementById('focusSelect')?.value==='city'||document.getElementById('focusSelect')?.value==='station') return `<br><sup>Selected focus: ${c.name}, ${c.country} (${c.lat.toFixed(2)}, ${c.lon.toFixed(2)})</sup>`;
+  return '';
+}
+
+function plotLayout(title,ytitle){
+  return {
+    title:{text:title+plotFocusText(),x:0.02,xanchor:'left',font:{size:18,family:'Inter, Arial, sans-serif'}},
+    paper_bgcolor:'rgba(255,255,255,0)',plot_bgcolor:'rgba(255,255,255,0)',
+    margin:{l:72,r:35,t:82,b:105},
+    hovermode:'x unified',
+    legend:{orientation:'h',x:0.5,xanchor:'center',y:-0.24,yanchor:'top',font:{size:11}},
+    xaxis:{automargin:true,tickfont:{size:11},showgrid:false,zeroline:false,title:{text:'Time',standoff:12,font:{size:12}}},
+    yaxis:{automargin:true,tickfont:{size:11},gridcolor:'#e6eef3',zeroline:false,title:{text:ytitle,standoff:14,font:{size:12}}},
+    autosize:true
+  };
+}
+
+function drawPlots(){
+  updateCityCompareControlVisibility();
+  const plotType=document.getElementById('plotTypeSelect').value;
+  const product=selectedProduct();
+  const toggles=selectedToggles();
+  const cfg=categoryConfig[activeCategory];
+  const primaryProducts=toggles.length?toggles:[product];
+  latestSeries=generateSeries(primaryProducts);
+  latestPlotRows=latestSeries;
+  document.getElementById('mainPlotChip').textContent=document.getElementById('plotTypeSelect').selectedOptions[0].textContent;
+  document.getElementById('mainPlotNote').textContent=`${aggregationLabel(frequency())} values generated from ${document.getElementById('startDate').value} to ${document.getElementById('endDate').value}.`;
+  if(plotType==='timeseries'||plotType==='forecastObs'||plotType==='forecastEnvelope') drawTimeSeries(primaryProducts,plotType);
+  else if(plotType==='cityCompare') drawCityComparison();
+  else if(plotType==='forecastLead'||plotType==='leadMapSeries') drawForecastLead();
+  else if(plotType==='scatterAodPm'||plotType==='scatterForecastObs') drawScatter(plotType);
+  else if(plotType==='ranking') drawRanking();
+  else if(plotType==='climatology') drawClimatology();
+  else if(plotType==='annualTrend') drawAnnualTrend();
+  else if(plotType==='stationNetwork') drawStationNetwork();
+  else if(plotType==='fireActivity') drawFireActivity();
+  else if(plotType==='availability') drawAvailability();
+  else if(plotType==='categoryBar') drawCategoryBar();
+  else if(plotType==='biasLead') drawBiasLead();
+  else if(plotType==='metricsBar') drawMetricsBar();
+  else if(plotType==='exceedance') drawExceedance();
+  else drawTimeSeries(primaryProducts,plotType);
+  drawSupportPlot(plotType);
+}
+
+function drawTimeSeries(products,plotType){
+  const traces=products.map(p=>({x:latestSeries.map(r=>r.label),y:latestSeries.map(r=>r[p]),type:'scatter',mode:'lines+markers',name:productLabels[p]||p,line:{width:2.7,color:colors[p]},marker:{size:5}}));
+  if(plotType==='forecastEnvelope' && latestSeries[0]?.geos_fp_ml_pm25!==undefined){
+    const upper=latestSeries.map(r=>r.geos_fp_ml_pm25 + (r.forecast_uncertainty||6));
+    const lower=latestSeries.map(r=>r.geos_fp_ml_pm25 - (r.forecast_uncertainty||6));
+    traces.push({x:latestSeries.map(r=>r.label),y:upper,type:'scatter',mode:'lines',line:{width:0},showlegend:false,hoverinfo:'skip'});
+    traces.push({x:latestSeries.map(r=>r.label),y:lower,type:'scatter',mode:'lines',fill:'tonexty',fillcolor:'rgba(15,104,169,.18)',line:{width:0},name:'Uncertainty envelope',hoverinfo:'skip'});
+  }
+  const title=activeCategory==='forecast'?'Forecast time series':'Product time series';
+  const unit=productAxisTitle(products);
+  Plotly.react('mainPlot',traces,plotLayout(title,unit),{responsive:true,displaylogo:false});
+}
+
+
+function getComparisonCities(){
+  const citySel=document.getElementById('compareCitySelect');
+  const country=document.getElementById('compareCountrySelect')?.value || 'Africa overview';
+  let chosen=Array.from(citySel?.selectedOptions || []).map(o=>o.value).slice(0,10);
+  const pool=country==='Africa overview'?cities:cities.filter(c=>c.country===country);
+  if(!chosen.length) chosen=pool.slice(0,Math.min(6,pool.length)).map(c=>c.name);
+  return chosen.map(n=>cities.find(c=>c.name===n)).filter(Boolean).slice(0,10);
+}
+
+function drawCityComparison(){
+  const products=ensureComparableProducts(comparisonProducts()).filter(p=>!['fire_hotspots','viirs_rgb','forecast_category','rmse_skill','exceedance_skill'].includes(p));
+  const prods=products.length?products:[selectedProduct()];
+  const selectedCities=getComparisonCities();
+  const valid=dateObj(document.getElementById('validDate').value);
+  const lead=parseInt(document.getElementById('leadSlider').value)||0;
+  const rows=selectedCities.map(c=>{const v=valuesFor(c,valid,12,lead);const row={city:c.name,country:c.country};prods.forEach(p=>row[p]=roundValue(productValue(v,p),p));return row});
+  latestPlotRows=rows;
+  const traces=prods.map(p=>({
+    x:rows.map(r=>r.city),y:rows.map(r=>r[p]),type:'bar',name:`${productLabels[p]} (${productUnits[p]||'value'})`,marker:{color:colors[p]||'#0f68a9'},
+    hovertemplate:`%{x}<br>${productLabels[p]}: %{y} ${productUnits[p]||''}<extra></extra>`
+  }));
+  const layout=plotLayout('Selected city comparison',productAxisTitle(prods));layout.barmode='group';layout.xaxis.title.text='Selected cities';layout.xaxis.tickangle=-25;layout.margin.b=140;
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+function drawForecastLead(){
+  const city=selectedCity();
+  const valid=dateObj(document.getElementById('validDate').value);
+  const rows=[];
+  for(let h=0;h<=72;h+=3){const d=new Date(valid.getTime()+h*3600000);const v=valuesFor(city,d,d.getUTCHours(),h);rows.push({lead:h,label:`+${h} h`,forecast:v.geos_fp_ml_pm25,uncertainty:v.forecast_uncertainty})}
+  latestPlotRows=rows;
+  const traces=[
+    {x:rows.map(r=>r.label),y:rows.map(r=>r.forecast),type:'scatter',mode:'lines+markers',name:'Forecast PM₂.₅',line:{width:3,color:colors.geos_fp_ml_pm25},marker:{size:6}},
+    {x:rows.map(r=>r.label),y:rows.map(r=>r.forecast+r.uncertainty),type:'scatter',mode:'lines',line:{width:0},showlegend:false,hoverinfo:'skip'},
+    {x:rows.map(r=>r.label),y:rows.map(r=>r.forecast-r.uncertainty),type:'scatter',mode:'lines',fill:'tonexty',fillcolor:'rgba(15,104,169,.18)',line:{width:0},name:'Uncertainty envelope',hoverinfo:'skip'}
+  ];
+  Plotly.react('mainPlot',traces,plotLayout('0-72 h forecast lead-time series','µg m⁻³'),{responsive:true,displaylogo:false});
+}
+
+
+function drawScatter(plotType){
+  const rows=generateSeries(categoryConfig[activeCategory].toggles);
+  latestPlotRows=rows;
+  let xTitle,yTitle,title,x,traces;
+  if(plotType==='scatterForecastObs'){
+    const products=ensureComparableProducts(comparisonProducts()).filter(p=>!['rmse_skill','exceedance_skill'].includes(p));
+    x=rows.map(r=>r.historical_obs||r.obs);
+    xTitle='Observation-like PM₂.₅'; yTitle=productAxisTitle(products); title='Forecast/evaluation products versus observation';
+    traces=products.map(p=>({x,y:rows.map(r=>r[p]??r.forecast),text:rows.map(r=>r.label),type:'scatter',mode:'markers',name:`${productLabels[p]} (${productUnits[p]||'value'})`,marker:{size:8,opacity:.78,color:colors[p]||'#0f68a9'}}));
+  } else {
+    const pmProducts=ensureComparableProducts(comparisonProducts()).filter(p=>['merra2_pm25','merra2_cnn_pm25','washu_pm25','historical_obs','openaq_pm25','geos_fp_ml_pm25'].includes(p));
+    const activePm=pmProducts.length?pmProducts:['openaq_pm25'];
+    const aodSource=(comparisonProducts().includes('aeronet_aod'))?'aeronet_aod':'viirs_aod';
+    x=rows.map(r=>r[aodSource]??r.viirs_aod??r.aod);
+    xTitle=(aodSource==='aeronet_aod')?'AERONET AOD':'VIIRS AOD';
+    yTitle='PM₂.₅ (µg m⁻³)'; title='AOD versus PM₂.₅ only';
+    traces=activePm.map(p=>({x,y:rows.map(r=>r[p]??r.pm25),text:rows.map(r=>r.label),type:'scatter',mode:'markers',name:`${productLabels[p]} (${productUnits[p]||''})`,marker:{size:8,opacity:.80,color:colors[p]||'#0f68a9'}}));
+  }
+  const layout=plotLayout(title,yTitle);layout.xaxis.title.text=xTitle;layout.hovermode='closest';
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+function drawRanking(){
+  const valid=dateObj(document.getElementById('validDate').value);
+  const products=ensureComparableProducts(comparisonProducts());
+  const scored=cities.map(c=>{
+    const v=valuesFor(c,valid,12,parseInt(document.getElementById('leadSlider').value)||0);
+    const score=products.reduce((a,p)=>a+Math.abs(productValue(v,p))/(productUnits[p]?.includes('AOD')?0.02:1),0)/products.length;
+    return {city:c.name,country:c.country,values:v,score};
+  }).sort((a,b)=>b.score-a.score).slice(0,12).reverse();
+  latestPlotRows=scored.map(r=>{const out={city:r.city,country:r.country};products.forEach(p=>out[p]=roundValue(productValue(r.values,p),p));return out});
+  const traces=products.map(p=>({
+    x:scored.map(r=>roundValue(productValue(r.values,p),p)),
+    y:scored.map(r=>`${r.city}, ${r.country}`),
+    type:'bar',orientation:'h',name:`${productLabels[p]} (${productUnits[p]||'value'})`,
+    marker:{color:colors[p]||'#0f68a9'},hovertemplate:`%{y}<br>${productLabels[p]}: %{x} ${productUnits[p]||''}<extra></extra>`
+  }));
+  const layout=plotLayout('City ranking by selected product toggles',productAxisTitle(products));
+  layout.barmode='group';layout.xaxis.title.text=productAxisTitle(products);layout.yaxis.title.text='City';layout.margin.l=165;layout.margin.b=95;
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawClimatology(){
+  const city=selectedCity();const products=ensureComparableProducts(comparisonProducts());const rows=[];
+  for(let m=1;m<=12;m++){
+    const row={month:new Date(Date.UTC(2026,m-1,1)).toLocaleString('en-US',{month:'short',timeZone:'UTC'})};
+    products.forEach(p=>{let vals=[];for(let y=2021;y<=2026;y++){const d=new Date(Date.UTC(y,m-1,15));vals.push(productValue(valuesFor(city,d,12,0),p))}row[p]=roundValue(vals.reduce((a,b)=>a+b,0)/vals.length,p)});
+    rows.push(row);
+  }
+  latestPlotRows=rows;
+  const traces=products.map(p=>({x:rows.map(r=>r.month),y:rows.map(r=>r[p]),type:'scatter',mode:'lines+markers',name:`${productLabels[p]} (${productUnits[p]||'value'})`,line:{width:2.8,color:colors[p]||'#0f68a9'},marker:{size:6}}));
+  Plotly.react('mainPlot',traces,plotLayout('Monthly climatology by selected product toggles',productAxisTitle(products)),{responsive:true,displaylogo:false});
+}
+
+function drawAnnualTrend(){
+  const city=selectedCity();const products=selectedToggles();const rows=[];
+  for(let y=2000;y<=2026;y++){const d=new Date(Date.UTC(y,6,1));const row={label:String(y),year:y};products.forEach(p=>row[p]=roundValue(valuesFor(city,d,12,0)[p],p));rows.push(row)}
+  latestPlotRows=rows;
+  const traces=products.map(p=>({x:rows.map(r=>r.year),y:rows.map(r=>r[p]),type:'scatter',mode:'lines+markers',name:productLabels[p],line:{width:2.7,color:colors[p]},marker:{size:5}}));
+  Plotly.react('mainPlot',traces,plotLayout('Annual / yearly trend','value'),{responsive:true,displaylogo:false});
+}
+
+
+function drawStationNetwork(){
+  const valid=dateObj(document.getElementById('validDate').value);let products=ensureComparableProducts(comparisonProducts());
+  const rows=cities.filter((c,i)=>i<16).map(c=>{const v=valuesFor(c,valid,12,0);const row={station:c.station,city:c.name};products.forEach(p=>row[p]=roundValue(productValue(v,p),p));return row});
+  latestPlotRows=rows;
+  const traces=products.map(p=>({x:rows.map(r=>r.city),y:rows.map(r=>r[p]),type:'bar',name:`${productLabels[p]} (${productUnits[p]||'value'})`,marker:{color:colors[p]||'#0f68a9'}}));
+  const layout=plotLayout('Station/city network comparison by selected product toggles',productAxisTitle(products));layout.barmode='group';layout.xaxis.tickangle=-35;layout.margin.b=120;
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawFireActivity(){
+  if(frequency()!=='daily'){drawTimeSeries(ensureComparableProducts(comparisonProducts()).filter(p=>p!=='fire_hotspots'), 'timeseries'); return;}
+  const city=selectedCity();const products=ensureComparableProducts(comparisonProducts());const rows=[];const start=dateObj(document.getElementById('startDate').value);
+  for(let i=0;i<30;i++){const d=addDays(start,i);const v=valuesFor(city,d,12,0);const row={label:d.toISOString().slice(5,10),date:fmtDate(d)};products.forEach(p=>row[p]=roundValue(productValue(v,p),p));rows.push(row)}
+  latestPlotRows=rows;
+  const traces=products.map(p=>({x:rows.map(r=>r.label),y:rows.map(r=>r[p]),type:p==='fire_hotspots'?'bar':'scatter',mode:p==='fire_hotspots'?undefined:'lines+markers',name:`${productLabels[p]} (${productUnits[p]||'value'})`,marker:{color:colors[p]||'#0f68a9'},line:{width:2.6,color:colors[p]||'#0f68a9'}}));
+  const layout=plotLayout('Daily fire and aerosol activity by selected product toggles',productAxisTitle(products));layout.barmode='group';
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+function drawAvailability(){
+  const products=ensureComparableProducts(comparisonProducts());const labels=createTimeline('monthly',document.getElementById('startDate').value,document.getElementById('endDate').value).map(r=>r.label).slice(0,24);
+  const z=products.map((p,pi)=>labels.map((l,mi)=>clamp(78 + 18*Math.sin(mi/3+pi) + (p.includes('rgb')?5:0) - (p.includes('fire')?10:0),35,99)));
+  latestPlotRows=[];
+  const trace={z,x:labels,y:products.map(p=>productLabels[p]),type:'heatmap',colorscale:'YlGnBu',colorbar:{title:'Availability %',thickness:14,len:.70,x:1.02}};
+  const layout=plotLayout('Synthetic product availability matrix','Product');layout.margin.r=95;layout.yaxis.automargin=true;
+  Plotly.react('mainPlot',[trace],layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawCategoryBar(){
+  const valid=dateObj(document.getElementById('validDate').value);const products=ensureComparableProducts(comparisonProducts());
+  const cats=['Within guideline','Moderate','Elevated','High','Severe episode'];
+  const traces=products.map(p=>{const counts=Object.fromEntries(cats.map(c=>[c,0]));cities.forEach(c=>{const v=productValue(valuesFor(c,valid,12,parseInt(document.getElementById('leadSlider').value)||0),p);const cat=category(p.includes('aod')?v*75:v).label;counts[cat]=(counts[cat]||0)+1});return {x:cats,y:cats.map(c=>counts[c]||0),type:'bar',name:productLabels[p],marker:{color:colors[p]||'#0f68a9'}}});
+  latestPlotRows=cats.map(c=>{const row={category:c};traces.forEach(t=>row[t.name]=t.y[cats.indexOf(c)]);return row});
+  const layout=plotLayout('Category summary by selected product toggles','Number of cities');layout.barmode='group';
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawBiasLead(){
+  const city=selectedCity();const valid=dateObj(document.getElementById('validDate').value);const products=ensureComparableProducts(comparisonProducts());const rows=[];
+  for(let h=0;h<=72;h+=3){const d=new Date(valid.getTime()+h*3600000);const v=valuesFor(city,d,d.getUTCHours(),h);const row={lead:`+${h} h`};products.forEach(p=>row[p]=roundValue(productValue(v,p),p));rows.push(row)}
+  latestPlotRows=rows;
+  const traces=products.map(p=>({x:rows.map(r=>r.lead),y:rows.map(r=>r[p]),type:'scatter',mode:'lines+markers',name:`${productLabels[p]} (${productUnits[p]||'value'})`,line:{width:2.7,color:colors[p]||'#0f68a9'},marker:{size:5}}));
+  Plotly.react('mainPlot',traces,plotLayout('Lead-time behavior by selected product toggles',productAxisTitle(products)),{responsive:true,displaylogo:false});
+}
+
+
+function drawMetricsBar(){
+  const products=ensureComparableProducts(comparisonProducts());const valid=dateObj(document.getElementById('validDate').value);
+  const rows=products.map(p=>{let vals=cities.map(c=>productValue(valuesFor(c,valid,12,24),p));let mean=vals.reduce((a,b)=>a+b,0)/vals.length;let spread=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length);return {product:productLabels[p],mean:roundValue(mean,p),spread:Number(spread.toFixed(1)),unit:productUnits[p]||'value'}});
+  latestPlotRows=rows;
+  const traces=[{x:rows.map(r=>r.product),y:rows.map(r=>r.mean),type:'bar',name:'Mean value',marker:{color:products.map(p=>colors[p]||'#0f68a9')}},{x:rows.map(r=>r.product),y:rows.map(r=>r.spread),type:'bar',name:'Spatial spread'}];
+  const layout=plotLayout('Selected product summary metrics','native units / spread');layout.barmode='group';layout.xaxis.tickangle=-20;layout.margin.b=120;
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawExceedance(){
+  const products=ensureComparableProducts(comparisonProducts());const rows=[{category:'Hits'},{category:'Misses'},{category:'False alarms'},{category:'Correct negatives'}];
+  const traces=products.map((p,pi)=>{const vals=[74-2*pi,12+pi,9+2*pi,83-3*pi].map(v=>clamp(v,0,100));vals.forEach((v,i)=>rows[i][p]=v);return {x:rows.map(r=>r.category),y:vals,type:'bar',name:productLabels[p],marker:{color:colors[p]||'#0f68a9'}}});
+  latestPlotRows=rows;
+  const layout=plotLayout('Exceedance detection by selected product toggles','percent or count index');layout.barmode='group';
+  Plotly.react('mainPlot',traces,layout,{responsive:true,displaylogo:false});
+}
+
+
+function drawSupportPlot(plotType){
+  const valid=dateObj(document.getElementById('validDate').value);let products=ensureComparableProducts(comparisonProducts());
+  if(plotType==='scatterAodPm') products=products.filter(p=>['merra2_pm25','merra2_cnn_pm25','washu_pm25','historical_obs','openaq_pm25','geos_fp_ml_pm25'].includes(p));
+  if(!products.length && plotType==='scatterAodPm') products=['openaq_pm25'];
+  let rows=cities.map(c=>{const v=valuesFor(c,valid,12,parseInt(document.getElementById('leadSlider').value)||0);const row={city:c.name,country:c.country};products.forEach(p=>row[p]=roundValue(productValue(v,p),p));row.score=products.reduce((a,p)=>a+Math.abs(productValue(v,p))/(productUnits[p]?.includes('AOD')?0.02:1),0)/products.length;return row});
+  if(['scatterAodPm','scatterForecastObs'].includes(plotType)){
+    const traces=products.map(p=>({x:rows.map(r=>r.viirs_aod ?? valuesFor(cities.find(c=>c.name===r.city),valid,12,0).viirs_aod),y:rows.map(r=>r[p]),text:rows.map(r=>`${r.city}, ${r.country}`),type:'scatter',mode:'markers',name:productLabels[p],marker:{size:9,opacity:.78,color:colors[p]||'#0f68a9'}}));
+    const layout=plotLayout('Cross-city selected-product scatter context',productAxisTitle(products));layout.xaxis.title.text='AOD context';layout.hovermode='closest';
+    Plotly.react('supportPlot',traces,layout,{responsive:true,displaylogo:false});document.getElementById('supportPlotChip').textContent='Cross-city scatter';return;
+  }
+  rows=rows.sort((a,b)=>b.score-a.score).slice(0,10).reverse();
+  const traces=products.map(p=>({x:rows.map(r=>r[p]),y:rows.map(r=>r.city),type:'bar',orientation:'h',name:`${productLabels[p]} (${productUnits[p]||'value'})`,marker:{color:colors[p]||'#0f68a9'}}));
+  const layout=plotLayout('Top cities by selected product toggles',productAxisTitle(products));layout.barmode='group';layout.yaxis.title.text='City';layout.xaxis.title.text=productAxisTitle(products);layout.margin.l=125;
+  Plotly.react('supportPlot',traces,layout,{responsive:true,displaylogo:false});
+  document.getElementById('supportPlotChip').textContent='Multi-product ranked context';
+}
+
+function updateMetrics(){
+  const city=selectedCity();const valid=dateObj(document.getElementById('validDate').value);const lead=parseInt(document.getElementById('leadSlider').value)||0;const v=valuesFor(city,valid,12,lead);const product=selectedProduct();const main=roundValue(v[product]??v.merra2_cnn_pm25,product);const unit=productUnits[product]||'';
+  document.getElementById('metricMain').textContent=main;document.getElementById('metricMainUnit').textContent=unit;
+  document.getElementById('metricAod').textContent=v.viirs_aod.toFixed(2);document.getElementById('metricForecast').textContent=v.geos_fp_ml_pm25.toFixed(0);document.getElementById('metricCoverage').textContent=Math.round(clamp(88 - Math.abs(v.forecast_bias) + (activeCategory==='nrt'?4:0),55,98));
+  const cat=category(v.merra2_cnn_pm25);document.getElementById('metricStatus').textContent=cat.label;document.getElementById('metricDot').style.background=cat.color;document.getElementById('metricFill').style.width=cat.pct+'%';
+}
+
+function updateContext(){
+  const cfg=categoryConfig[activeCategory];const product=selectedProduct();
+  document.getElementById('selectedProductChip').textContent=productLabels[product]||'Selected product';
+  document.getElementById('selectedTimeChip').textContent=`${cap(frequency())} · ${document.getElementById('startDate').value} to ${document.getElementById('endDate').value}`;
+  document.getElementById('leadLabel').textContent=`+${document.getElementById('leadSlider').value} h`;
+  document.getElementById('opacityLabel').textContent=`${document.getElementById('opacitySlider').value}%`;
+  const city=selectedCity();
+  const locationText=selectedMapPoint?`${city.name}, ${city.country} · ${city.lat.toFixed(2)}, ${city.lon.toFixed(2)}`:`${city.name}, ${city.country}`;
+  const focusLabel=selectedMapPoint?'Selected map point':'Africa/city context';
+  const chips=[`<span class="section-chip"><i class="bi bi-diagram-3"></i>${cfg.title}</span>`,`<span class="section-chip"><i class="bi bi-geo-alt"></i>${focusLabel}</span>`,`<span class="section-chip"><i class="bi bi-buildings"></i>${locationText}</span>`];
+  document.getElementById('activeContext').innerHTML=chips.join('');
+  const selInfo=document.getElementById('mapSelectionInfo');
+  if(selInfo){const selLabel=selectedMapPoint?.isCountryAggregate?'Selected country':'Selected map point';selInfo.innerHTML=selectedMapPoint?`<strong>${selLabel}:</strong> ${city.name}<br><strong>Country:</strong> ${city.country} · <strong>Lat/Lon:</strong> ${city.lat.toFixed(3)}, ${city.lon.toFixed(3)}<br><strong>Plots:</strong> Updated for this selected focus. <a href="#" onclick="resetPointSelection();return false;">Reset to overview</a>`:`<strong>Selected focus:</strong> Africa overview or current dropdown selection. Click any heat-map point, observed station, hotspot, or event callout to drill down.`;}
+}
+
+function updateMapChips(){
+  const chips=[];
+  const pointProduct = pointOnlyMapProduct(selectedProduct()) ? selectedProduct() : (pointOnlyMapProduct(selectedHeatProduct()) ? selectedHeatProduct() : null);
+  if(suppressHeatForSelectedProduct()) chips.push(`<span class="section-chip"><i class="bi bi-record-circle"></i>${productLabels[pointProduct]||'Point observations'} point observations</span>`);
+  else if(document.getElementById('toggleHeat').checked)chips.push(`<span class="section-chip"><i class="bi bi-grid-3x3-gap"></i>${productLabels[selectedHeatProduct()]}</span>`);else chips.push(`<span class="section-chip"><i class="bi bi-eye-slash"></i>Heat map hidden</span>`);
+  if(document.getElementById('toggleCities').checked)chips.push(`<span class="section-chip">Observed stations</span>`);
+  if(document.getElementById('toggleCities').checked)chips.push(`<span class="section-chip">${stationNetworkLabel(document.getElementById('stationSelect')?.value || 'all')}</span>`);
+  if(activeCategory==='nrt'&&document.getElementById('toggleCities').checked&&(selectedProduct()==='fire_hotspots'||document.getElementById('toggleFires')?.checked))chips.push(`<span class="section-chip">Fire hotspots</span>`);
+  if(document.getElementById('toggleEvents').checked)chips.push(`<span class="section-chip">Evidence-based event callouts</span>`);
+  document.getElementById('mapChips').innerHTML=chips.join('');
+}
+
+function updateProductMetadata(){
+  const p=selectedProduct();const m=productMeta[p];
+  if(!m){document.getElementById('productMetadata').innerHTML='Metadata will appear after product selection.';return}
+  document.getElementById('productMetadata').innerHTML=`<div class="source-row"><div class="source-name">Product</div><div class="source-desc">${productLabels[p]}</div><div class="source-meta">${productUnits[p]||''}</div></div><div class="source-row"><div class="source-name">Description</div><div class="source-desc">${m.short}</div><div class="source-meta">Synthetic</div></div><div class="source-row"><div class="source-name">Temporal use</div><div class="source-desc">${m.temporal}</div><div class="source-meta">Selectable</div></div><div class="source-row"><div class="source-name">Resolution</div><div class="source-desc">${m.resolution}</div><div class="source-meta">Demo only</div></div><div class="source-row"><div class="source-name">Primary use</div><div class="source-desc">${m.use}</div><div class="source-meta">AAQE UI</div></div>`;
+}
+
+function updateDownloadTable(){
+  const rows=[
+    ['Current plot','plot_data.csv','Selected workflow, product, frequency, and time range','downloadPlotCSV()'],
+    ['Heat map','heat_map_grid.csv','Visible Africa-domain synthetic grid cells and selected heat-map product','downloadMapCSV()'],
+    ['City/station context','city_station_context.csv','Synthetic city, country, station, PM₂.₅, AOD, and forecast attributes','downloadStationCSV()'],
+    ['Full bundle','aaqe_synthetic_bundle.json','All synthetic products, controls, metadata, and heat-map cells','downloadBundle()']
+  ];
+  document.getElementById('downloadTable').innerHTML=rows.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td><td><button class="btn btn-sm btn-outline-aaqe" onclick="${r[3]}">Download</button></td></tr>`).join('');
+}
+
+function updateDashboard(fit=false){
+  updateContext();updateProductMetadata();updateHeatMap();updateMarkers();updateMetrics();drawPlots();updateDownloadTable();if(fit)fitCurrentFocus();
+}
+
+function fitCurrentFocus(){
+  const city=selectedCity();
+  if(selectedMapPoint) map.setView([city.lat,city.lon],8);
+  else if(selectedCountry() && selectedCountry()!=='Africa overview'){const meta=countryMeta[selectedCountry()]||countryMeta[city.country]||countryMeta['Africa overview'];map.setView(meta.center,meta.zoom)}
+  else map.setView([2,20],4);
+}
+
+function selectCountryFromMap(name){clearPointSelectionSilently();document.getElementById('countrySelect').value=name;refreshCityOptions();$('#citySelect').val(document.getElementById('citySelect').value).trigger('change.select2');refreshStationOptions();selectedMapPoint=makeCountryPoint(name);setSelectionMarker(selectedMapPoint.lat,selectedMapPoint.lon);updateDashboard(true);showToast(`Country aggregate plots updated: ${name}`)}
+function selectCityFromMap(name){clearPointSelectionSilently();const city=cities.find(c=>c.name===name);if(city){document.getElementById('countrySelect').value=city.country;refreshCityOptions();$('#citySelect').val(city.name).trigger('change.select2');refreshStationOptions();document.getElementById('focusSelect').value='city';updateDashboard(true);showToast(`City focus: ${city.name}`)}}
+function resetDashboard(){clearPointSelectionSilently();activeCategory='historical';document.querySelectorAll('.analysis-btn').forEach(b=>b.classList.toggle('active',b.dataset.category==='historical'));document.getElementById('focusSelect').value='africa';document.getElementById('countrySelect').value='Africa overview';refreshCityOptions();$('#citySelect').val(cities[0].name).trigger('change.select2');refreshStationOptions();document.getElementById('frequencySelect').value='daily';document.getElementById('startDate').value='2026-01-01';document.getElementById('endDate').value='2026-02-18';document.getElementById('validDate').value='2026-02-18';document.getElementById('leadSlider').value=24;document.getElementById('toggleHeat').checked=true;document.getElementById('toggleColorbar').checked=true;document.getElementById('toggleAutoRange').checked=true;document.getElementById('colorMapSelect').value='turbo';document.getElementById('toggleGrid').checked=false;refreshCategoryPanels(true);updateDashboard(true);showToast('Dashboard reset to organized historical view.')}
+function cap(s){return s.charAt(0).toUpperCase()+s.slice(1).replace('annual','Annual / yearly')}
+function showToast(msg){const box=document.getElementById('toastBox');box.textContent=msg;box.style.display='block';clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>box.style.display='none',2600)}
+
+function rowsToCSV(rows){if(!rows||!rows.length)return '';const keys=Object.keys(rows[0]);return [keys.join(','),...rows.map(r=>keys.map(k=>JSON.stringify(r[k]??'')).join(','))].join('\n')}
+function downloadText(filename,text,mime='text/plain'){const blob=new Blob([text],{type:mime});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);showToast(`Downloaded ${filename}`)}
+function downloadPlotCSV(){downloadText('aaqe_current_plot_synthetic.csv',rowsToCSV(latestPlotRows),'text/csv')}
+function downloadMapCSV(){downloadText('aaqe_heat_map_grid_synthetic.csv',rowsToCSV(latestHeatCells),'text/csv')}
+function downloadStationCSV(){const valid=dateObj(document.getElementById('validDate').value);const rows=cities.map(c=>{const v=valuesFor(c,valid,12,0);return {city:c.name,country:c.country,station:c.station,lat:c.lat,lon:c.lon,pm25:v.merra2_cnn_pm25.toFixed(1),aod:v.viirs_aod.toFixed(3),forecast:v.geos_fp_ml_pm25.toFixed(1)}});downloadText('aaqe_city_station_context_synthetic.csv',rowsToCSV(rows),'text/csv')}
+function downloadBundle(){const bundle={note:'Synthetic data only for AAQE dashboard UI demonstration',category:activeCategory,product:selectedProduct(),heat_product:selectedHeatProduct(),frequency:frequency(),start:document.getElementById('startDate').value,end:document.getElementById('endDate').value,valid_date:document.getElementById('validDate').value,plot_rows:latestPlotRows,heat_cells:latestHeatCells,selected_map_point:selectedMapPoint,cities,product_metadata:productMeta};downloadText('aaqe_full_synthetic_bundle.json',JSON.stringify(bundle,null,2),'application/json')}
+
+
+function setupFloatingMapPanels(){
+  ['mapToolbarPanel','mapLegend'].forEach(id=>{
+    const panel=document.getElementById(id);
+    const parent=panel?.closest('.map-card');
+    if(!panel || !parent || panel.dataset.floatingReady==='1') return;
+    panel.dataset.floatingReady='1';
+    const rect=panel.getBoundingClientRect();
+    const pr=parent.getBoundingClientRect();
+    panel.style.left=Math.max(12, rect.left-pr.left)+'px';
+    panel.style.top=Math.max(12, rect.top-pr.top)+'px';
+    panel.style.right='auto';panel.style.bottom='auto';panel.style.transform='none';
+    if(window.L){L.DomEvent.disableClickPropagation(panel);L.DomEvent.disableScrollPropagation(panel);}
+    const handle=panel.querySelector('.drag-handle')||panel;
+    handle.addEventListener('pointerdown', ev=>{
+      if(ev.target.closest('button,select,input,a,.accordion-button')) return;
+      ev.preventDefault();
+      panel.setPointerCapture?.(ev.pointerId);
+      const startX=ev.clientX,startY=ev.clientY;
+      const startLeft=parseFloat(panel.style.left)||0,startTop=parseFloat(panel.style.top)||0;
+      const move=e=>{
+        const pr2=parent.getBoundingClientRect();
+        const pw=panel.offsetWidth, ph=panel.offsetHeight;
+        const newLeft=clamp(startLeft+(e.clientX-startX),8,Math.max(8,pr2.width-pw-8));
+        const newTop=clamp(startTop+(e.clientY-startY),8,Math.max(8,pr2.height-ph-8));
+        panel.style.left=newLeft+'px';panel.style.top=newTop+'px';
+      };
+      const up=e=>{
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',up);
+        panel.releasePointerCapture?.(ev.pointerId);
+      };
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',up,{once:true});
+    });
+  });
+}
+
+function attachEvents(){
+  ['focusSelect','countrySelect','productSelect','heatProductSelect','frequencySelect','startDate','endDate','validDate','leadSlider','opacitySlider','plotTypeSelect','colorMapSelect','colorMinInput','colorMaxInput','compareCountrySelect','compareCitySelect'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{if(['countrySelect'].includes(id)){clearPointSelectionSilently();refreshCityOptions();$('#citySelect').trigger('change.select2');refreshStationOptions()}if(id==='focusSelect' && document.getElementById('focusSelect').value!=='point') clearPointSelectionSilently();if(id==='frequencySelect') refreshPlotOptions(true); if(id==='compareCountrySelect') refreshComparisonCityControls(); if(id==='productSelect')updateProductMetadata();updateDashboard(id==='focusSelect'||id==='countrySelect')}));
+  document.getElementById('leadSlider').addEventListener('input',()=>updateDashboard(false));document.getElementById('opacitySlider').addEventListener('input',()=>updateDashboard(false));['colorMinInput','colorMaxInput'].forEach(id=>document.getElementById(id)?.addEventListener('input',()=>{if(!document.getElementById('toggleAutoRange').checked)updateDashboard(false)}));
+  $('#citySelect').on('change',()=>{clearPointSelectionSilently();refreshStationOptions();updateDashboard(document.getElementById('focusSelect').value==='city')});
+  $('#stationSelect').on('change',()=>{updateDashboard(false)});
+  $('#compareCountrySelect').on('change',()=>{refreshComparisonCityControls();updateDashboard(false)});
+  $('#compareCitySelect').on('change',()=>updateDashboard(false));
+  document.addEventListener('change',e=>{if(e.target.matches('.form-check-input')||e.target.matches('.plot-toggle'))updateDashboard(false)});
+  window.addEventListener('resize',()=>{Plotly.Plots.resize('mainPlot');Plotly.Plots.resize('supportPlot')});
+}
+
+
+function switchPage(page){
+  document.querySelectorAll('.top-page-btn').forEach(btn=>btn.classList.toggle('active', btn.dataset.page===page));
+  document.querySelectorAll('.app-page').forEach(el=>el.classList.remove('active-page'));
+  const target=document.getElementById(page+'Page');
+  if(target) target.classList.add('active-page');
+  if(page==='dashboard') setTimeout(()=>{map?.invalidateSize?.();Plotly.Plots.resize('mainPlot');Plotly.Plots.resize('supportPlot');},180);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+document.querySelectorAll('.top-page-btn').forEach(btn=>btn.addEventListener('click',()=>switchPage(btn.dataset.page)));
+
+initControls();refreshCategoryPanels(true);initMap();attachEvents();updateDashboard(true);setTimeout(setupFloatingMapPanels,250);
+</script>
+</body>
+</html>

@@ -1,8 +1,13 @@
-import { useState, memo } from 'react';
-import { MapContainer, TileLayer, LayerGroup, LayersControl, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
+import { useState, memo, useEffect } from 'react';
+import { MapContainer, TileLayer, LayerGroup, LayersControl, useMap, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
 import Merra2StationsLayer from './Merra2StationsLayer';
-import PM25HeatMapLayer from './PM25HeatMapLayer';
+import OpenAqStationsLayer from './OpenAqStationsLayer';
+import PM25HeatMapLayer, { type PM25Sample } from './PM25HeatMapLayer';
+import WashUPM25HeatMapLayer, { type WashUPM25Sample } from './WashUPM25HeatMapLayer';
 import Merra2Pm25GridLegend from './Merra2Pm25GridLegend';
+import WashUPm25GridLegend from './WashUPm25GridLegend';
+import AeronetAodLegend from './AeronetAodLegend';
+import type { WashUPeriod } from '../../services/washuApi';
 import L from 'leaflet';
 import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
@@ -14,10 +19,60 @@ import type { FIRMSFirePoint } from '../../services/firmsApi';
 import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
 import type { LatLonBounds } from '../../utils/geoUtils';
 import type { MERRA2StationDailyRecord } from '../../services/merra2Api';
+import type { OpenAqStationRecord } from '../../services/openaqApi';
 import type { AAQEForecastPoint } from '../../services/aaqeForecastApi';
 import { getAaqeDisplayValues } from '../../services/aaqeForecastApi';
 import { calculateAQIFromPm25, getAqiCategory } from '../../utils/aqiUtils';
 import type { AaqeDisplayType } from '../../services/aaqeForecastApi';
+
+/** NASA GIBS true-color layer — SNPP was retired; NOAA-21 is the current VIIRS source. */
+const GIBS_VIIRS_TRUECOLOR_LAYER = 'VIIRS_NOAA21_CorrectedReflectance_TrueColor';
+
+function MapResizeWatcher() {
+  const map = useMap();
+  useEffect(() => {
+    const fix = () => {
+      map.invalidateSize({ animate: false });
+      map.fire('moveend');
+    };
+    fix();
+    const t = window.setTimeout(fix, 250);
+    window.addEventListener('resize', fix);
+    const container = map.getContainer();
+    const ro =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => fix())
+        : null;
+    ro?.observe(container);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('resize', fix);
+      ro?.disconnect();
+    };
+  }, [map]);
+  return null;
+}
+
+function MapLayerVisibilityRefresh({
+  showFires,
+  showAAQEForecast,
+  showAeronet,
+}: {
+  showFires: boolean;
+  showAAQEForecast: boolean;
+  showAeronet: boolean;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    const fix = () => {
+      map.invalidateSize({ animate: false });
+      map.fire('moveend');
+    };
+    const t = window.setTimeout(fix, 150);
+    return () => window.clearTimeout(t);
+  }, [showFires, showAAQEForecast, showAeronet, map]);
+  return null;
+}
 
 function getContrastingTextColor(hexColor: string): string {
   const hex = hexColor.replace('#', '');
@@ -47,11 +102,16 @@ interface MapVisualizationProps {
   showMerra2Stations?: boolean;
   showMerra2GridOverlay?: boolean;
   merra2GridDate?: string;
+  merra2GridHour?: number;
   onMerra2GridLoadingChange?: (loading: boolean) => void;
   onMerra2GridSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
   merra2GridSource?: 'gesdisc' | 'sample' | null;
+  gridOpacity?: number;
   showAAQEForecast?: boolean;
-  onPm25Sample?: (sample: { lat: number; lon: number; value: number; date: string; min: number; max: number; units: string; source: 'gesdisc' | 'sample' } | null) => void;
+  showOpenAq?: boolean;
+  openAqStations?: OpenAqStationRecord[];
+  onOpenAqStationClick?: (station: OpenAqStationRecord) => void;
+  onPm25Sample?: (sample: PM25Sample | null) => void;
   onFireClick?: (fire: FIRMSFirePoint) => void;
   onAeronetSiteClick?: (site: AERONETSite) => void;
   selectedDate?: string;
@@ -73,6 +133,16 @@ interface MapVisualizationProps {
   aaqeForecastDate?: string;
   aaqeDisplayType?: AaqeDisplayType;
   onAAQEForecastClick?: (point: AAQEForecastPoint) => void;
+  showWashU?: boolean;
+  washuPeriod?: WashUPeriod;
+  washuYear?: number;
+  washuMonth?: number | null;
+  onWashuGridLoadingChange?: (loading: boolean) => void;
+  onWashuGridSourceChange?: (source: 'satpm' | 'sample', fallbackReason?: string) => void;
+  washuGridSource?: 'satpm' | 'sample' | null;
+  washuPeriodLabel?: string;
+  onWashuPm25Sample?: (sample: WashUPM25Sample | null) => void;
+  onWashuMapClick?: (lat: number, lon: number) => void;
 }
 
 const MapVisualization = ({
@@ -86,10 +156,15 @@ const MapVisualization = ({
   showMerra2Stations = true,
   showMerra2GridOverlay = false,
   merra2GridDate,
+  merra2GridHour = 12,
   onMerra2GridLoadingChange,
   onMerra2GridSourceChange,
   merra2GridSource = null,
+  gridOpacity = 0.65,
   showAAQEForecast = false,
+  showOpenAq = false,
+  openAqStations = [],
+  onOpenAqStationClick,
   onPm25Sample,
   onFireClick,
   onAeronetSiteClick,
@@ -110,8 +185,38 @@ const MapVisualization = ({
   aaqeForecastDate: _aaqeForecastDate,
   aaqeDisplayType = 'DAILY_AQI',
   onAAQEForecastClick,
+  showWashU = false,
+  washuPeriod = 'monthly',
+  washuYear = new Date().getFullYear(),
+  washuMonth = new Date().getMonth() + 1,
+  onWashuGridLoadingChange,
+  onWashuGridSourceChange,
+  washuGridSource = null,
+  washuPeriodLabel,
+  onWashuPm25Sample,
+  onWashuMapClick,
 }: MapVisualizationProps) => {
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [pm25Sample, setPm25Sample] = useState<PM25Sample | null>(null);
+  const [washuSample, setWashuSample] = useState<WashUPM25Sample | null>(null);
+
+  const handlePm25Sample = (sample: PM25Sample | null) => {
+    setPm25Sample(sample);
+    onPm25Sample?.(sample);
+  };
+
+  const handleMapCoords = (coords: { lat: number; lng: number } | null) => {
+    setCursorCoords(coords);
+    if (!coords) {
+      setPm25Sample(null);
+      setWashuSample(null);
+    }
+  };
+
+  const handleWashuSample = (sample: WashUPM25Sample | null) => {
+    setWashuSample(sample);
+    onWashuPm25Sample?.(sample);
+  };
 
   return (
     <div className="map-visualization-root">
@@ -123,6 +228,12 @@ const MapVisualization = ({
       scrollWheelZoom
       preferCanvas
     >
+      <MapResizeWatcher />
+      <MapLayerVisibilityRefresh
+        showFires={showFires}
+        showAAQEForecast={showAAQEForecast}
+        showAeronet={showAeronet}
+      />
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="OpenStreetMap">
           <TileLayer
@@ -155,11 +266,11 @@ const MapVisualization = ({
 
       {showVIIRSImagery && (
         <TileLayer
-          attribution='VIIRS &copy; <a href="https://www.earthdata.nasa.gov" target="_blank" rel="noopener">NASA GIBS</a>'
+          attribution='VIIRS NOAA-21 &copy; <a href="https://www.earthdata.nasa.gov" target="_blank" rel="noopener">NASA GIBS</a>'
           url={
             import.meta.env.DEV
-              ? `/api/gibs/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${selectedDate}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`
-              : `https://gibs-{s}.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${selectedDate}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`
+              ? `/api/gibs/wmts/epsg3857/best/${GIBS_VIIRS_TRUECOLOR_LAYER}/default/${selectedDate}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`
+              : `https://gibs-{s}.earthdata.nasa.gov/wmts/epsg3857/best/${GIBS_VIIRS_TRUECOLOR_LAYER}/default/${selectedDate}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`
           }
           subdomains={['a', 'b', 'c']}
           pane="overlayPane"
@@ -173,10 +284,24 @@ const MapVisualization = ({
       {showMERRA2PM25 && showMerra2GridOverlay && (
         <PM25HeatMapLayer
           date={merra2GridDate ?? selectedDate}
-          opacity={0.65}
-          onPm25Sample={onPm25Sample}
+          hour={merra2GridHour}
+          opacity={gridOpacity}
+          onPm25Sample={handlePm25Sample}
           onLoadingChange={onMerra2GridLoadingChange}
           onSourceChange={onMerra2GridSourceChange}
+        />
+      )}
+
+      {showWashU && (
+        <WashUPM25HeatMapLayer
+          period={washuPeriod}
+          year={washuYear}
+          month={washuMonth}
+          opacity={gridOpacity}
+          onPm25Sample={handleWashuSample}
+          onLoadingChange={onWashuGridLoadingChange}
+          onSourceChange={onWashuGridSourceChange}
+          onMapClick={onWashuMapClick}
         />
       )}
 
@@ -186,17 +311,26 @@ const MapVisualization = ({
           active
           onStationClick={(s) => {
             onMerra2StationClick?.(s);
-            onPm25Sample?.({
+            handlePm25Sample({
               lat: s.latitude,
               lon: s.longitude,
               value: s.pm25,
               date: s.date,
+              hour: merra2GridHour,
               min: 0,
               max: 0,
               units: 'µg/m³',
               source: 'gesdisc',
             });
           }}
+        />
+      )}
+
+      {showOpenAq && (
+        <OpenAqStationsLayer
+          stations={openAqStations}
+          active
+          onStationClick={onOpenAqStationClick}
         />
       )}
 
@@ -297,7 +431,7 @@ const MapVisualization = ({
         </>
       )}
 
-      <MapMouseEvents onCoords={setCursorCoords} />
+      <MapMouseEvents onCoords={handleMapCoords} />
 
       {cursorCoords && (
         <div
@@ -324,10 +458,12 @@ const MapVisualization = ({
           Lat: {cursorCoords.lat.toFixed(4)}  Lon: {cursorCoords.lng.toFixed(4)}
         </div>
       )}
-      {((showAAQEForecast || (showMERRA2PM25 && showMerra2Stations)) ||
-        (showMERRA2PM25 && showMerra2GridOverlay)) && (
+      {((showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations)) ||
+        (showMERRA2PM25 && showMerra2GridOverlay) ||
+        showWashU ||
+        showAeronet) && (
         <div className="map-legends-stack">
-          {(showAAQEForecast || (showMERRA2PM25 && showMerra2Stations)) && (
+          {(showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations)) && (
             <div className="aaqe-bottom-legend" aria-label="AQI category legend">
               <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
                 <span style={{ background: '#00e400' }}>Good</span>
@@ -347,8 +483,16 @@ const MapVisualization = ({
               </div>
             </div>
           )}
+          {showAeronet && <AeronetAodLegend />}
           {showMERRA2PM25 && showMerra2GridOverlay && (
-            <Merra2Pm25GridLegend source={merra2GridSource} />
+            <Merra2Pm25GridLegend source={merra2GridSource} hour={merra2GridHour} sample={pm25Sample} />
+          )}
+          {showWashU && (
+            <WashUPm25GridLegend
+              source={washuGridSource}
+              periodLabel={washuPeriodLabel ?? washuSample?.periodLabel}
+              sample={washuSample}
+            />
           )}
         </div>
       )}

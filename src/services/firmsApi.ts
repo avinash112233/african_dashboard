@@ -1,13 +1,48 @@
 // NASA FIRMS VIIRS fire hotspot data.
-// Primary: WFS shapefile-backed NOAA-21 7-day regional layers (fast, 2 parallel requests).
-// Fallback: CSV Area API (NOAA-20) when WFS returns an error.
+// Primary: backend-compacted `/api/firms/fires7day` feed — the server fetches + caches the
+// raw NOAA-21 WFS GeoJSON (50MB+ per region) and returns a small gzip-compressed tuple array.
+// Fallback 1: raw WFS GeoJSON directly from the browser (2 parallel, very large requests).
+// Fallback 2: CSV Area API (NOAA-20) when WFS also fails.
 
 const FIRMS_KEY = import.meta.env.VITE_FIRMS_MAP_KEY || '';
 const API_BASE  = '/api/firms';
 
 const WFS_CACHE_TTL_MS = 15 * 60 * 1000;
+const SESSION_CACHE_KEY = 'aaqe-firms7day-v1';
 let wfsCache: { data: FIRMSFirePoint[]; ts: number } | null = null;
 let wfsInflight: Promise<FIRMSFirePoint[]> | null = null;
+
+function readSessionFireCache(): FIRMSFirePoint[] | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts: number; data: FIRMSFirePoint[] };
+    if (!parsed?.data?.length || Date.now() - parsed.ts > WFS_CACHE_TTL_MS) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionFireCache(data: FIRMSFirePoint[]) {
+  if (data.length === 0) return;
+  try {
+    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+/** Instant read of cached fire points (memory or session) — no network. */
+export function peekFirePoints(): FIRMSFirePoint[] | null {
+  if (wfsCache && Date.now() - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
+  return readSessionFireCache();
+}
+
+/** Warm the fire cache as soon as the dashboard opens. */
+export function prefetchFires(): Promise<FIRMSFirePoint[]> {
+  return getNOAA21VIIRS7DayFromWFS();
+}
 
 export interface FIRMSFirePoint {
   latitude: number;
@@ -46,7 +81,10 @@ export async function getNOAA20VIIRS7DayDataset(): Promise<FIRMSFirePoint[]> {
   try {
     for (let day = 1; day <= 7; day++) {
       const res = await fetch(`${API_BASE}/api/area/csv/${FIRMS_KEY}/${source}/${bbox}/${day}`);
-      if (!res.ok) throw new Error(`FIRMS API ${res.status}: ${res.statusText}`);
+      if (!res.ok) {
+        console.warn(`[FIRMS] Day ${day} unavailable (${res.status}); skipping.`);
+        continue;
+      }
       for (const r of parseCSV(await res.text())) {
         const lat = parseFloat(r.latitude), lng = parseFloat(r.longitude);
         if (isNaN(lat) || isNaN(lng)) continue;
@@ -99,7 +137,58 @@ function wfsFeatureToFirePoint(f: WFSFireFeature): FIRMSFirePoint | null {
   };
 }
 
+/** Field order used by the backend's compact `/api/firms/fires7day` tuple feed. */
+const COMPACT_FIELDS = [
+  'latitude', 'longitude', 'brightness', 'brightness_2', 'scan', 'track',
+  'acq_date', 'acq_time', 'confidence', 'frp', 'daynight',
+] as const;
+
+type CompactTuple = [
+  number, number, number, number | null, number, number,
+  string, string, string, number | null, string,
+];
+
+function compactTupleToFirePoint(t: CompactTuple): FIRMSFirePoint | null {
+  const [latitude, longitude, brightness, brightness_2, scan, track, acq_date, acq_time, confidence, frp, daynight] = t;
+  if (latitude == null || longitude == null || isNaN(latitude) || isNaN(longitude)) return null;
+  return {
+    latitude, longitude, bright_ti4: brightness ?? 0,
+    bright_ti5: brightness_2 ?? undefined,
+    scan: scan ?? 0, track: track ?? 0,
+    acq_date: acq_date ?? '', acq_time: acq_time ?? '',
+    satellite: 'NOAA-21', instrument: 'VIIRS',
+    confidence: confidence ?? '', version: '2.0NRT',
+    frp: frp ?? undefined, daynight: daynight || 'D',
+  };
+}
+
+/**
+ * Fetches the compact, server-minified 7-day Africa fire feed. The backend fetches +
+ * caches the raw WFS GeoJSON (which is 50MB+ per region) and serves back a gzip-compressed
+ * array of numeric tuples instead, avoiding that huge download/parse in the browser.
+ */
 async function fetchNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
+  try {
+    const res = await fetch(`${API_BASE}/fires7day`);
+    if (!res.ok) throw new Error(`FIRMS compact feed ${res.status}: ${res.statusText}`);
+    const data = (await res.json()) as { fields?: string[]; points?: CompactTuple[] };
+    const fields = data.fields ?? [];
+    const sameOrder = fields.length === COMPACT_FIELDS.length && fields.every((f, i) => f === COMPACT_FIELDS[i]);
+    if (!sameOrder) console.warn('[FIRMS] Compact feed field order changed unexpectedly.');
+    const points = data.points ?? [];
+    const results: FIRMSFirePoint[] = [];
+    for (const t of points) {
+      const pt = compactTupleToFirePoint(t);
+      if (pt) results.push(pt);
+    }
+    return results;
+  } catch (err) {
+    console.warn('[FIRMS] Compact feed failed, falling back to raw WFS:', err);
+    return fetchNOAA21VIIRS7DayFromRawWFS();
+  }
+}
+
+async function fetchNOAA21VIIRS7DayFromRawWFS(): Promise<FIRMSFirePoint[]> {
   if (!FIRMS_KEY) { console.warn('[FIRMS] No VITE_FIRMS_MAP_KEY in .env'); return []; }
   const layer = 'ms:fires_noaa21_7days';
   const params = new URLSearchParams({
@@ -130,9 +219,33 @@ async function fetchNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
 export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
   const now = Date.now();
   if (wfsCache && now - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
+
+  const sessionHit = readSessionFireCache();
+  if (sessionHit) {
+    if (!wfsInflight) {
+      wfsInflight = fetchNOAA21VIIRS7DayFromWFS()
+        .then((data) => {
+          if (data.length > 0) {
+            wfsCache = { data, ts: Date.now() };
+            writeSessionFireCache(data);
+          }
+          return data;
+        })
+        .finally(() => { wfsInflight = null; });
+    }
+    return sessionHit;
+  }
+
   if (wfsInflight) return wfsInflight;
+
   wfsInflight = fetchNOAA21VIIRS7DayFromWFS()
-    .then((data) => { wfsCache = { data, ts: Date.now() }; return data; })
+    .then((data) => {
+      if (data.length > 0) {
+        wfsCache = { data, ts: Date.now() };
+        writeSessionFireCache(data);
+      }
+      return data;
+    })
     .finally(() => { wfsInflight = null; });
   return wfsInflight;
 }

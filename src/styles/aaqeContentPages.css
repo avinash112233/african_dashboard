@@ -1,0 +1,240 @@
+.aaqe-content-page {
+  padding: 24px 26px 42px;
+  max-width: 1220px;
+  margin: 0 auto;
+}
+
+.aaqe-content-hero {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(196, 214, 225, 0.88);
+  border-radius: 24px;
+  box-shadow: var(--aaqe-shadow);
+  padding: 26px 30px;
+  margin-bottom: 18px;
+}
+
+.aaqe-content-hero h1 {
+  font-size: 34px;
+  line-height: 1.08;
+  font-weight: 950;
+  color: #102033;
+  margin: 0 0 8px;
+  letter-spacing: -0.03em;
+}
+
+.aaqe-content-hero p {
+  font-size: 15px;
+  line-height: 1.55;
+  color: #526879;
+  max-width: 920px;
+  margin: 0;
+}
+
+.aaqe-content-section {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(196, 214, 225, 0.88);
+  border-radius: 22px;
+  box-shadow: var(--aaqe-shadow-soft);
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.aaqe-content-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e1ebf1;
+  padding-bottom: 11px;
+  margin-bottom: 17px;
+  flex-wrap: wrap;
+}
+
+.aaqe-content-heading-row h2 {
+  font-size: 22px;
+  font-weight: 950;
+  color: #12324b;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.aaqe-content-heading-row span {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--aaqe-blue);
+  background: #eef8fc;
+  border: 1px solid #d5eaf3;
+  border-radius: 999px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.aaqe-about-highlight {
+  background: linear-gradient(135deg, #eef8fc, #ffffff);
+  border: 1px solid #d4eaf3;
+  border-radius: 18px;
+  padding: 16px;
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #42586a;
+}
+
+.aaqe-about-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.aaqe-about-card {
+  border: 1px solid #dde9f0;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fff, #f8fbfd);
+  padding: 17px;
+  min-height: 142px;
+}
+
+.aaqe-about-card h3 {
+  font-size: 17px;
+  font-weight: 950;
+  color: #102033;
+  margin: 0 0 8px;
+}
+
+.aaqe-about-card p,
+.aaqe-about-card li {
+  font-size: 13.5px;
+  line-height: 1.48;
+  color: #536b7d;
+  margin-bottom: 5px;
+}
+
+.aaqe-about-card ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.aaqe-content-section > p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #42586a;
+  margin: 0;
+}
+
+.aaqe-team-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.aaqe-team-grid.collab-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.aaqe-team-card {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  padding: 15px;
+  border: 1px solid #dde9f0;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fff, #f7fbfd);
+}
+
+.aaqe-team-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--aaqe-blue), var(--aaqe-cyan));
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 950;
+  font-size: 15px;
+  flex: 0 0 auto;
+  box-shadow: 0 8px 18px rgba(15, 104, 169, 0.22);
+}
+
+.aaqe-team-card h3 {
+  font-size: 17px;
+  font-weight: 950;
+  color: #102033;
+  margin: 0 0 5px;
+  line-height: 1.25;
+}
+
+.aaqe-team-role {
+  font-size: 14px;
+  font-weight: 800;
+  color: #314c61;
+  line-height: 1.35;
+  margin-bottom: 5px;
+}
+
+.aaqe-team-affiliation {
+  font-size: 13px;
+  color: #64798a;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.aaqe-publication-list {
+  counter-reset: aaqe-pub;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aaqe-publication-list li {
+  counter-increment: aaqe-pub;
+  position: relative;
+  padding: 14px 16px 14px 54px;
+  border: 1px solid #dde9f0;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff, #f8fbfd);
+  font-size: 14px;
+  line-height: 1.55;
+  color: #24384a;
+}
+
+.aaqe-publication-list li::before {
+  content: '[' counter(aaqe-pub) ']';
+  position: absolute;
+  left: 15px;
+  top: 15px;
+  font-weight: 950;
+  color: var(--aaqe-blue);
+  font-size: 14px;
+}
+
+.aaqe-publication-list a {
+  color: var(--aaqe-blue);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.aaqe-publication-list a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 991px) {
+  .aaqe-about-grid,
+  .aaqe-team-grid,
+  .aaqe-team-grid.collab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .aaqe-content-hero h1 {
+    font-size: 28px;
+  }
+
+  .aaqe-content-page {
+    padding: 18px 15px 32px;
+  }
+}

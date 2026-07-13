@@ -66,6 +66,14 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      '^/api/washu': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '^/api/openaq': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
       // Proxy FIRMS API requests to avoid CORS issues
       '^/api/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',

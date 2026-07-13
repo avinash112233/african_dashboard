@@ -144,6 +144,30 @@ export function latLonToGridFrac(
   return { colFrac, rowFrac };
 }
 
+/** Nearest native grid cell (no bilinear interpolation). */
+export function samplePm25AtLatLonNearest(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+    bounds: { south: number; west: number; north: number; east: number };
+  },
+  lat: number,
+  lon: number
+): number | null {
+  const { south, west, north, east } = grid.bounds;
+  if (lon < west || lon > east || lat < south || lat > north) return null;
+
+  const colFrac = ((lon - west) / (east - west)) * (grid.width - 1);
+  const rowFrac = ((north - lat) / (north - south)) * (grid.height - 1);
+  const col = Math.max(0, Math.min(grid.width - 1, Math.round(colFrac)));
+  const row = Math.max(0, Math.min(grid.height - 1, Math.round(rowFrac)));
+  const v = grid.values[row * grid.width + col];
+  if (v === grid.noDataValue || v == null || Number.isNaN(v)) return null;
+  return v;
+}
+
 /** Bilinear sample; falls back to nearest grid cell if corners include no-data. */
 export function samplePm25AtLatLon(
   grid: {
@@ -158,20 +182,123 @@ export function samplePm25AtLatLon(
 ): number | null {
   const frac = latLonToGridFrac(lat, lon, grid.bounds, grid.width, grid.height);
   if (!frac) return null;
-  const bi = bilinearPm25(
-    grid.values,
-    grid.width,
-    grid.height,
-    grid.noDataValue,
-    frac.colFrac,
-    frac.rowFrac
-  );
-  if (bi != null) return bi;
-  const cr = Math.max(0, Math.min(grid.height - 1, Math.round(frac.rowFrac)));
-  const cc = Math.max(0, Math.min(grid.width - 1, Math.round(frac.colFrac)));
-  const v = grid.values[cr * grid.width + cc];
-  if (v === grid.noDataValue || v == null || Number.isNaN(v)) return null;
-  return v;
+  return samplePm25AtLatLonNearest(grid, lat, lon);
+}
+
+/** Paint native grid cells (blocky, no value interpolation). */
+export function renderPm25GridNativeCells(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  vmin: number = PM25_COLORBAR_MIN,
+  vmax: number = PM25_COLORBAR_MAX,
+  pxPerLonCell = 5,
+  pxPerLatCell = 4
+): string {
+  const { width, height, values, noDataValue } = grid;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * pxPerLonCell;
+  canvas.height = height * pxPerLatCell;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  for (let row = 0; row < height; row++) {
+    for (let col = 0; col < width; col++) {
+      const v = values[row * width + col];
+      if (v == null || v === noDataValue || Number.isNaN(v)) continue;
+      const [r, g, b] = pm25ToRgb(v, vmin, vmax);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(col * pxPerLonCell, row * pxPerLatCell, pxPerLonCell, pxPerLatCell);
+    }
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+/**
+ * Light MERRA2 smooth — modest bilinear upsample (not WashU-level).
+ * Softens cell edges while keeping the coarse MERRA2 structure visible.
+ */
+export function renderPm25GridLightSmooth(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  vmin: number = PM25_COLORBAR_MIN,
+  vmax: number = PM25_COLORBAR_MAX,
+  /** Upsample factor vs native cells — keep small so it stays "a little" smooth. */
+  scale = 3
+): string {
+  const { width, height, values, noDataValue } = grid;
+  const factor = Math.max(2, Math.min(4, Math.round(scale)));
+  const targetWidth = Math.max(1, width * factor);
+  const targetHeight = Math.max(1, height * factor);
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  const img = ctx.createImageData(targetWidth, targetHeight);
+  const pixels = img.data;
+
+  const sampleSoft = (colFrac: number, rowFrac: number): number | null => {
+    const strict = bilinearPm25(values, width, height, noDataValue, colFrac, rowFrac);
+    if (strict != null) return strict;
+
+    // Near no-data edges: average whatever valid corners exist (avoids holes).
+    if (colFrac < 0 || rowFrac < 0 || colFrac > width - 1 || rowFrac > height - 1) return null;
+    const c0 = Math.floor(colFrac);
+    const r0 = Math.floor(rowFrac);
+    const c1 = Math.min(c0 + 1, width - 1);
+    const r1 = Math.min(r0 + 1, height - 1);
+    const dc = colFrac - c0;
+    const dr = rowFrac - r0;
+    const read = (rr: number, cc: number) => {
+      const x = values[rr * width + cc];
+      if (x === noDataValue || x == null || Number.isNaN(x)) return null;
+      return x;
+    };
+    const corners: Array<{ w: number; v: number }> = [];
+    const q00 = read(r0, c0);
+    const q10 = read(r0, c1);
+    const q01 = read(r1, c0);
+    const q11 = read(r1, c1);
+    if (q00 != null) corners.push({ w: (1 - dc) * (1 - dr), v: q00 });
+    if (q10 != null) corners.push({ w: dc * (1 - dr), v: q10 });
+    if (q01 != null) corners.push({ w: (1 - dc) * dr, v: q01 });
+    if (q11 != null) corners.push({ w: dc * dr, v: q11 });
+    if (corners.length === 0) return null;
+    const wSum = corners.reduce((a, c) => a + c.w, 0);
+    if (wSum <= 0) return corners[0].v;
+    return corners.reduce((a, c) => a + c.v * c.w, 0) / wSum;
+  };
+
+  for (let py = 0; py < targetHeight; py++) {
+    const rowFrac = ((py + 0.5) / targetHeight) * height - 0.5;
+    for (let px = 0; px < targetWidth; px++) {
+      const colFrac = ((px + 0.5) / targetWidth) * width - 0.5;
+      const v = sampleSoft(colFrac, rowFrac);
+      const i = (py * targetWidth + px) * 4;
+      if (v == null) {
+        pixels[i + 3] = 0;
+        continue;
+      }
+      const [r, g, b] = pm25ToRgb(v, vmin, vmax);
+      pixels[i] = r;
+      pixels[i + 1] = g;
+      pixels[i + 2] = b;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
 }
 
 /** Paint the full grid once to a PNG data URL for Leaflet ImageOverlay (much faster than per-tile GridLayer). */
@@ -204,6 +331,157 @@ export function renderPm25GridToDataUrl(
         continue;
       }
       const [r, g, b] = pm25ToRgb(v, vmin, vmax);
+      pixels[i] = r;
+      pixels[i + 1] = g;
+      pixels[i + 2] = b;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+/** Smooth, publication-style WashU heatmap — bilinear upsample + ACAG colormap. */
+export function renderWashUGridSmooth(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  targetWidth = 1920,
+  vmin?: number,
+  vmax?: number
+): string {
+  // Dynamic import avoided — caller passes washu colormap via callback pattern below
+  return renderWashUGridSmoothWithColorFn(grid, targetWidth, vmin, vmax, defaultWashuColorFn);
+}
+
+/**
+ * Light WashU render — modest upscale with strict no-data edges (no ocean bleed).
+ * Keeps grid structure visible; much less blur than the 2048px publication smooth path.
+ */
+export function renderWashUGridLightSmoothWithColorFn(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  scale = 3,
+  vmin: number | undefined,
+  vmax: number | undefined,
+  colorFn: ColorFn
+): string {
+  const lo = vmin ?? 0;
+  const hi = vmax ?? 80;
+  const { values, width, height, noDataValue } = grid;
+  const factor = Math.max(2, Math.min(4, Math.round(scale)));
+  const targetWidth = Math.max(1, width * factor);
+  const targetHeight = Math.max(1, height * factor);
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  const img = ctx.createImageData(targetWidth, targetHeight);
+  const pixels = img.data;
+
+  for (let py = 0; py < targetHeight; py++) {
+    const rowFrac = ((py + 0.5) / targetHeight) * height - 0.5;
+    for (let px = 0; px < targetWidth; px++) {
+      const colFrac = ((px + 0.5) / targetWidth) * width - 0.5;
+      // Strict bilinear — skip pixels touching no-data so coastlines stay clean.
+      const v = bilinearPm25(values, width, height, noDataValue, colFrac, rowFrac);
+      const i = (py * targetWidth + px) * 4;
+      if (v == null) {
+        pixels[i + 3] = 0;
+        continue;
+      }
+      const [r, g, b] = colorFn(v, lo, hi);
+      pixels[i] = r;
+      pixels[i + 1] = g;
+      pixels[i + 2] = b;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+type ColorFn = (value: number, vmin: number, vmax: number) => [number, number, number];
+
+function defaultWashuColorFn(value: number, vmin: number, vmax: number): [number, number, number] {
+  // Lazy inline to avoid circular imports; WashU layer imports washuColormap directly.
+  const span = vmax - vmin;
+  const t = span <= 0 ? 0 : Math.max(0, Math.min(1, (value - vmin) / span));
+  const stops: [number, number, number, number][] = [
+    [0, 49, 54, 149],
+    [0.45, 224, 243, 248],
+    [0.65, 254, 224, 139],
+    [0.85, 244, 109, 67],
+    [1, 165, 0, 38],
+  ];
+  let i = 0;
+  for (let s = 0; s < stops.length - 1; s++) {
+    if (t >= stops[s][0] && t <= stops[s + 1][0]) {
+      i = s;
+      break;
+    }
+    if (t > stops[s + 1][0]) i = s + 1;
+  }
+  const j = Math.min(i + 1, stops.length - 1);
+  const [t0, r0, g0, b0] = stops[i];
+  const [t1, r1, g1, b1] = stops[j];
+  if (t1 <= t0) return [r0, g0, b0];
+  const u = (t - t0) / (t1 - t0);
+  return [
+    Math.round(r0 + (r1 - r0) * u),
+    Math.round(g0 + (g1 - g0) * u),
+    Math.round(b0 + (b1 - b0) * u),
+  ];
+}
+
+export function renderWashUGridSmoothWithColorFn(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  targetWidth: number,
+  vmin: number | undefined,
+  vmax: number | undefined,
+  colorFn: ColorFn
+): string {
+  const lo = vmin ?? 0;
+  const hi = vmax ?? 80;
+  const aspect = grid.height / Math.max(1, grid.width);
+  const targetHeight = Math.max(1, Math.round(targetWidth * aspect));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  const img = ctx.createImageData(targetWidth, targetHeight);
+  const pixels = img.data;
+  const { values, width, height, noDataValue } = grid;
+
+  for (let py = 0; py < targetHeight; py++) {
+    const rowFrac = (py / Math.max(1, targetHeight - 1)) * (height - 1);
+    for (let px = 0; px < targetWidth; px++) {
+      const colFrac = (px / Math.max(1, targetWidth - 1)) * (width - 1);
+      const v = bilinearPm25(values, width, height, noDataValue, colFrac, rowFrac);
+      const i = (py * targetWidth + px) * 4;
+      if (v == null) {
+        pixels[i + 3] = 0;
+        continue;
+      }
+      const [r, g, b] = colorFn(v, lo, hi);
       pixels[i] = r;
       pixels[i + 1] = g;
       pixels[i + 2] = b;

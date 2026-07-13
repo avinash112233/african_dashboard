@@ -11,6 +11,7 @@ import type { AERONETSite, SiteAODMap } from '../../services/aeronetApi';
 import { getAODLevelColor } from '../../utils/aodUtils';
 
 const MAX_FIRE_MARKERS = 20000;
+const FIRE_MARKER_CHUNK = 600;
 
 function sampleFirePoints(points: FIRMSFirePoint[], max: number): FIRMSFirePoint[] {
   if (points.length <= max) return points;
@@ -181,26 +182,34 @@ const CanvasFireLayer = memo(function CanvasFireLayer({
       const visible = pointsInBounds(firePoints, bounds);
       const firesToShow = sampleFirePoints(visible, MAX_FIRE_MARKERS);
       const group = L.layerGroup();
-
-      for (const fire of firesToShow) {
-        const marker = L.circleMarker([fire.latitude, fire.longitude], {
-          radius: 3,
-          fillColor: '#ff0000',
-          color: 'rgba(255, 255, 255, 0.9)',
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 1,
-          renderer,
-          interactive: allowPointerEvents,
-        });
-        if (allowPointerEvents) {
-          marker.on('click', () => onFireClickRef.current?.(fire));
-        }
-        marker.addTo(group);
-      }
-
       fireGroupRef.current = group;
       if (firesToShow.length > 0) group.addTo(map);
+
+      let index = 0;
+      const addChunk = () => {
+        if (fireBuildGenRef.current !== gen) return;
+        const end = Math.min(index + FIRE_MARKER_CHUNK, firesToShow.length);
+        for (; index < end; index++) {
+          const fire = firesToShow[index];
+          const marker = L.circleMarker([fire.latitude, fire.longitude], {
+            radius: 3,
+            fillColor: '#ff0000',
+            color: 'rgba(255, 255, 255, 0.9)',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 1,
+            renderer,
+            interactive: allowPointerEvents,
+          });
+          if (allowPointerEvents) {
+            marker.on('click', () => onFireClickRef.current?.(fire));
+          }
+          marker.addTo(group);
+        }
+        if (index < firesToShow.length) requestAnimationFrame(addChunk);
+      };
+
+      if (firesToShow.length > 0) addChunk();
     };
 
     let debounce: ReturnType<typeof setTimeout> | undefined;

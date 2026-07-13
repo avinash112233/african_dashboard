@@ -1,47 +1,66 @@
-import { Navbar, Nav, Container } from 'react-bootstrap';
-import { Link, useLocation } from 'react-router-dom';
-import './Navigation.css';
+import { useMemo, useState } from 'react';
+import { Link, NavLink } from 'react-router-dom';
+import { isDashboardV2Enabled } from '../../utils/featureFlags';
+
+const NAV_ITEMS = [
+  { to: '/dashboard', label: 'Dashboard', icon: 'bi-speedometer2' },
+  { to: '/dashboard-2', label: 'Dashboard 2', icon: 'bi-layout-wtf' },
+  { to: '/about', label: 'About', icon: 'bi-info-circle' },
+  { to: '/team', label: 'Team', icon: 'bi-people' },
+  { to: '/publications', label: 'Publications', icon: 'bi-journal-text' },
+] as const;
 
 const Navigation = () => {
-  const location = useLocation();
-
-  const isActive = (path: string) => {
-    return location.pathname === path ? 'active' : '';
-  };
+  const [menuOpen, setMenuOpen] = useState(false);
+  const navItems = useMemo(
+    () => NAV_ITEMS.filter((item) => isDashboardV2Enabled() || item.to !== '/dashboard-2'),
+    []
+  );
 
   return (
-    <Navbar expand="lg" className="navbar-custom">
-      <Container fluid className="navbar-inner">
-        <Navbar.Brand as={Link} to="/dashboard" className="navbar-brand-wrap">
-          <span className="navbar-brand-text">African Air Quality Explorer</span>
-        </Navbar.Brand>
-        <Navbar.Toggle aria-controls="basic-navbar-nav" className="navbar-toggle-btn" />
-        <Navbar.Collapse id="basic-navbar-nav" className="navbar-collapse-wrap">
-          <Nav className="navbar-nav-links">
-            <Nav.Link as={Link} to="/home" className={isActive('/home')}>
-              Home
-            </Nav.Link>
-            <Nav.Link
-              as={Link}
-              to="/dashboard"
-              className={`nav-link-dashboard ${isActive('/dashboard')}`}
+    <header className="aaqe-hero-header">
+      <div className="aaqe-header-inner">
+        <Link to="/dashboard" className="aaqe-brand-lockup" onClick={() => setMenuOpen(false)}>
+          <div className="aaqe-brand-icon" aria-hidden="true">
+            AQ
+          </div>
+          <div>
+            <h1 className="aaqe-brand-title">African Air Quality Explorer</h1>
+            <div className="aaqe-brand-subtitle">
+              NASA HAQAST project · Air quality monitoring, analysis, and forecasting for Africa
+            </div>
+          </div>
+        </Link>
+
+        <button
+          type="button"
+          className="aaqe-nav-toggle"
+          aria-expanded={menuOpen}
+          aria-label="Toggle navigation"
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <i className={`bi ${menuOpen ? 'bi-x-lg' : 'bi-list'}`} aria-hidden="true" />
+        </button>
+
+        <nav
+          className={`aaqe-top-page-nav${menuOpen ? ' open' : ''}`}
+          aria-label="AAQE pages"
+        >
+          {navItems.map(({ to, label, icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => `aaqe-top-page-btn${isActive ? ' active' : ''}`}
+              onClick={() => setMenuOpen(false)}
             >
-              Dashboard
-            </Nav.Link>
-            <Nav.Link as={Link} to="/publications" className={isActive('/publications')}>
-              Publications
-            </Nav.Link>
-            <Nav.Link as={Link} to="/team" className={isActive('/team')}>
-              Team
-            </Nav.Link>
-          </Nav>
-        </Navbar.Collapse>
-      </Container>
-    </Navbar>
+              <i className={`bi ${icon}`} aria-hidden="true" />
+              {label}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
+    </header>
   );
 };
 
 export default Navigation;
-
-
-

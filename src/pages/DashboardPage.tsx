@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import MapVisualization from '../components/maps/MapVisualization';
-import { getNOAA21VIIRS7DayFromWFS } from '../services/firmsApi';
+import { getNOAA21VIIRS7DayFromWFS, peekFirePoints, prefetchFires, type FIRMSFirePoint } from '../services/firmsApi';
 import {
   getAfricanAERONETSites,
   getAERONETData,
@@ -11,7 +11,6 @@ import {
   type SiteAODMap,
   type AERONETAODVersion,
 } from '../services/aeronetApi';
-import type { FIRMSFirePoint } from '../services/firmsApi';
 import type { AERONETSite } from '../services/aeronetApi';
 import ChartLoadingFallback from '../components/charts/ChartLoadingFallback';
 
@@ -22,10 +21,20 @@ const FireCountTimeSeriesChart = lazy(() => import('../components/charts/FireCou
 const FireAverageFrpTimeSeriesChart = lazy(() => import('../components/charts/FireAverageFrpTimeSeriesChart'));
 const FireBrightnessFrpScatterChart = lazy(() => import('../components/charts/FireBrightnessFrpScatterChart'));
 const MERRA2StationTimeSeriesChart = lazy(() => import('../components/charts/MERRA2StationTimeSeriesChart'));
+const OpenAqTimeSeriesChart = lazy(() => import('../components/charts/OpenAqTimeSeriesChart'));
 const AAQEThreeDayForecastChart = lazy(() => import('../components/charts/AAQEThreeDayForecastChart'));
+const WashUTimeSeriesChart = lazy(() => import('../components/charts/WashUTimeSeriesChart'));
 const AnalysisPanel = lazy(() => import('../components/analysis/AnalysisPanel'));
-import { normalizeAeronetDate, formatDateMonthDayYear, formatDisplayDate } from '../utils/dateFormat';
-import { computeDailyMeanAOD, getAODLevelColor, getAODLevelLabel, AOD_CLASSIFICATION_LEGEND } from '../utils/aodUtils';
+import { fetchWashUTimeseries, loadWashUGrid, washuPeriodFromDate, type WashUTimeseriesPoint } from '../services/washuApi';
+import { loadMerra2DailyCube } from '../services/merra2GridCube';
+import { formatDateMonthDayYear, formatDisplayDate, normalizeAeronetDate } from '../utils/dateFormat';
+import {
+  merra2DefaultDate,
+  MERRA2_DEFAULT_DATE,
+  openAqHistoricalDefaultDate,
+  todayDefaultDate,
+} from '../utils/dashboardDates';
+import { computeDailyMeanAOD, getAODLevelColor, getAODLevelLabel } from '../utils/aodUtils';
 import { aggregateFiresByDate, getFireBrightness, normalizeFireDate } from '../utils/fireAnalytics';
 import type { LatLonBounds } from '../utils/geoUtils';
 import { distanceMeters, isPointInLatLonBounds } from '../utils/geoUtils';
@@ -36,6 +45,24 @@ import {
   type MERRA2StationDailyRecord,
   type MERRA2StationTimeseriesPoint,
 } from '../services/merra2Api';
+import {
+  getOpenAqArchiveInfo,
+  getOpenAqLocations,
+  getOpenAqStations,
+  getOpenAqStationDay,
+  getOpenAqTimeseries,
+  hasOpenAqPm25Value,
+  mergeOpenAqStationValues,
+  peekOpenAqStations,
+  prefetchOpenAqHistorical,
+  prefetchOpenAqNrt,
+  refreshOpenAqStationsInBackground,
+  seedOpenAqTimeseriesFromStation,
+  skeletonStationsFromLocations,
+  type OpenAqMapMode,
+  type OpenAqStationRecord,
+  type OpenAqTimeseriesPoint,
+} from '../services/openaqApi';
 import {
   findNearestAAQEForecastInitDate,
   getAAQEForecastByDate,
@@ -53,6 +80,13 @@ import {
   anchorFromMerra2,
 } from '../analysis/locationAnchor';
 import type { AnalysisLocationContext } from '../analysis/types';
+import {
+  DASHBOARD_V1_LAYER_LABELS,
+  DASHBOARD_V1_WORKFLOW_META,
+  DASHBOARD_V1_WORKFLOW_TABS,
+  type DashboardV1Layer,
+  type DashboardV1Workflow,
+} from '../dashboardV1/config';
 import './DashboardPage.css';
 
 const COMPACT_LAYOUT_MAX_PX = 1023;
@@ -139,6 +173,19 @@ function getAqiTextColor(aqi: number | null): string {
   if (aqi <= 200) return '#b91c1c';  // Unhealthy — dark red
   if (aqi <= 300) return '#7e22ce';  // Very Unhealthy — dark purple
   return '#7f1d1d';                  // Hazardous — dark maroon
+}
+
+function openAqChartRangeEnd(
+  calendarEnd: dayjs.Dayjs,
+  lastReading: string | undefined,
+  mode: OpenAqMapMode
+) {
+  if (!lastReading) return calendarEnd;
+  const last = dayjs(lastReading, 'YYYY-MM-DD');
+  if (mode === 'latest') {
+    return last.isAfter(calendarEnd, 'day') ? last : calendarEnd;
+  }
+  return last.isBefore(calendarEnd, 'day') ? last : calendarEnd;
 }
 
 function AaqeSelectedPanel({ data, threeDayRows }: AaqeSelectedPanelProps) {
@@ -325,18 +372,156 @@ function Merra2SelectedPanel({ station, aqi, dataDate, metricsLoading }: Merra2S
   );
 }
 
+interface OpenAqSelectedPanelProps {
+  station: OpenAqStationRecord;
+  aqi: number | null;
+  dataDate: string;
+  metricsLoading?: boolean;
+}
+
+function OpenAqSelectedPanel({ station, aqi, dataDate, metricsLoading }: OpenAqSelectedPanelProps) {
+  const aqiCat = getAqiCategory(aqi);
+  const aqiBgColor = aqiCat.color;
+  const aqiTxtColor = getAqiTextColor(aqi);
+  const statLabel = station.mode === 'latest' ? 'latest reading' : 'daily mean (local day)';
+  const readingDateStr =
+    station.datetime?.slice(0, 10) || station.datetimeLast?.slice(0, 10) || dataDate;
+  const displayDate = station.mode === 'latest' ? readingDateStr : dataDate;
+
+  return (
+    <div className="merra2-panel">
+      <div className="merra2-panel-header">
+        <p className="merra2-panel-site">{station.name}</p>
+        <p className="merra2-panel-meta">OpenAQ Ground Monitor</p>
+        {station.country && <p className="merra2-panel-meta">{station.country}</p>}
+        {station.provider && <p className="merra2-panel-meta">{station.provider}</p>}
+        <p className="merra2-panel-meta">
+          {station.latitude.toFixed(4)}°, {station.longitude.toFixed(4)}°
+        </p>
+        <p className="merra2-panel-meta">
+          {station.mode === 'latest' ? 'Reading time' : 'Data date'}: {formatDateMonthDayYear(displayDate)}
+        </p>
+        <p className="merra2-panel-meta">
+          {station.isMonitor ? 'Reference monitor' : 'Air sensor'}
+        </p>
+      </div>
+
+      <div className="aaqe-metrics-row">
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${metricsLoading ? '#d1d5db' : aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? '…' : (aqi ?? '—')}
+          </div>
+          <div className="aaqe-metric-label">AQI</div>
+          <div className="aaqe-metric-cat" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? 'Updating…' : aqiCat.label}
+          </div>
+        </div>
+        <div className="aaqe-metric-card">
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : '#1f2937' }}>
+            {metricsLoading
+              ? '…'
+              : !hasOpenAqPm25Value(station)
+                ? '—'
+                : station.pm25!.toFixed(1)}
+          </div>
+          <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
+          <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>{statLabel}</div>
+        </div>
+      </div>
+
+      {station.locality && (
+        <div className="merra2-panel-address">
+          <span className="aaqe-section-label" style={{ display: 'inline', marginBottom: 0 }}>Locality: </span>
+          {station.locality}
+        </div>
+      )}
+
+      <p className="data-source-footer">Source: OpenAQ v3 · explore.openaq.org</p>
+    </div>
+  );
+}
+
+function WashUSelectedPanel({
+  lat,
+  lon,
+  periodLabel,
+  pm25,
+  loading,
+}: {
+  lat: number;
+  lon: number;
+  periodLabel: string;
+  pm25: number | null;
+  loading?: boolean;
+}) {
+  const aqi = pm25 != null ? calculateAQIFromPm25(pm25) : null;
+  const aqiCat = getAqiCategory(aqi);
+  const aqiBgColor = aqiCat.color;
+  const aqiTxtColor = getAqiTextColor(aqi);
+
+  return (
+    <div className="merra2-panel washu-panel">
+      <div className="merra2-panel-header">
+        <p className="merra2-panel-site">WashU SatPM2.5 location</p>
+        <p className="merra2-panel-meta">V6.GL.03 · Africa fine resolution (~1 km)</p>
+        <p className="merra2-panel-meta">
+          {lat.toFixed(4)}°, {lon.toFixed(4)}°
+        </p>
+        <p className="merra2-panel-meta">Map period: {periodLabel}</p>
+      </div>
+
+      <div className="aaqe-metrics-row">
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${loading ? '#d1d5db' : aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: loading ? '#9ca3af' : aqiTxtColor }}>
+            {loading ? '…' : (aqi ?? '—')}
+          </div>
+          <div className="aaqe-metric-label">AQI (from PM2.5)</div>
+          <div className="aaqe-metric-cat" style={{ color: loading ? '#9ca3af' : aqiTxtColor }}>
+            {loading ? 'Updating…' : aqiCat.label}
+          </div>
+        </div>
+        <div className="aaqe-metric-card">
+          <div className="aaqe-metric-value" style={{ color: loading ? '#9ca3af' : '#756bb1' }}>
+            {loading ? '…' : (pm25 != null ? pm25.toFixed(1) : '—')}
+          </div>
+          <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
+          <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>
+            {loading ? 'Sampling…' : 'nearest grid cell'}
+          </div>
+        </div>
+      </div>
+
+      <p className="data-source-footer">
+        Source: WashU ACAG SatPM2.5 ·{' '}
+        <a href="https://sites.wustl.edu/acag/surface-pm2-5/" target="_blank" rel="noopener noreferrer">
+          sites.wustl.edu/acag
+        </a>
+      </p>
+    </div>
+  );
+}
+
 const DashboardPage = () => {
-  const [selectedDate, setSelectedDate] = useState(dayjs());
+  const [selectedDate, setSelectedDate] = useState(() => todayDefaultDate());
   const [selectedFire, setSelectedFire] = useState<SelectedFireData | null>(null);
-  const [firePoints, setFirePoints] = useState<FIRMSFirePoint[]>([]);
+  const [firePoints, setFirePoints] = useState<FIRMSFirePoint[]>(() => peekFirePoints() ?? []);
   const [aeronetSites, setAeronetSites] = useState<AERONETSite[]>([]);
-  type LayerMode = 'aeronet' | 'fires' | 'viirs' | 'merra2' | 'aaqe';
-  const [activeLayer, setActiveLayer] = useState<LayerMode>('aeronet');
-  const showAeronet = activeLayer === 'aeronet';
-  const showFires = activeLayer === 'fires';
-  const showVIIRSImagery = activeLayer === 'viirs';
-  const showMERRA2PM25 = activeLayer === 'merra2';
-  const showAAQEForecast = activeLayer === 'aaqe';
+  type LayerMode = DashboardV1Layer;
+  const [workflow, setWorkflow] = useState<DashboardV1Workflow>('historical');
+  const [activeLayers, setActiveLayers] = useState<LayerMode[]>(['aeronet']);
+  const [primaryLayer, setPrimaryLayer] = useState<LayerMode>('aeronet');
+  const layerOn = useCallback((layer: LayerMode) => activeLayers.includes(layer), [activeLayers]);
+  const showAeronet = layerOn('aeronet');
+  const showFires = layerOn('fires');
+  const showVIIRSImagery = layerOn('viirs');
+  const showMERRA2PM25 = layerOn('merra2');
+  const showWashU = layerOn('washu');
+  const showOpenAq = layerOn('openaq');
+  const showAAQEForecast = layerOn('aaqe');
+  const preloadHistoricalLayers = workflow === 'historical';
+  const preloadNrtLayers = workflow === 'nrt';
+  const preloadForecastLayers = workflow === 'forecast';
+  const preloadOpenAqLayers = preloadHistoricalLayers || preloadNrtLayers;
   const [aaqeForecastPoints, setAaqeForecastPoints] = useState<AAQEForecastPoint[]>([]);
   const [aaqeLoading, setAaqeLoading] = useState(false);
   const [aaqeError, setAaqeError] = useState<string | null>(null);
@@ -372,8 +557,43 @@ const DashboardPage = () => {
   const [merra2ShowStations, setMerra2ShowStations] = useState(true);
   const [merra2ShowGridOverlay, setMerra2ShowGridOverlay] = useState(false);
   const [merra2GridLoading, setMerra2GridLoading] = useState(false);
+  const [merra2GridHour, setMerra2GridHour] = useState(12);
   const [merra2GridSource, setMerra2GridSource] = useState<'gesdisc' | 'sample' | null>(null);
   const [merra2GridFallbackReason, setMerra2GridFallbackReason] = useState<string | null>(null);
+  const [washuPeriod, setWashuPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const [washuGridLoading, setWashuGridLoading] = useState(false);
+  const [washuGridSource, setWashuGridSource] = useState<'satpm' | 'sample' | null>(null);
+  const [washuGridFallbackReason, setWashuGridFallbackReason] = useState<string | null>(null);
+  const [washuPin, setWashuPin] = useState<{ lat: number; lon: number; pm25: number | null } | null>(null);
+  const [washuSeries, setWashuSeries] = useState<WashUTimeseriesPoint[]>([]);
+  const [washuSeriesLoading, setWashuSeriesLoading] = useState(false);
+  const [washuSeriesError, setWashuSeriesError] = useState<string | null>(null);
+  const [washuSeriesStartYear, setWashuSeriesStartYear] = useState(() => dayjs('2023-01-01').year());
+  const [washuSeriesStartMonth, setWashuSeriesStartMonth] = useState(1);
+  const [washuSeriesEndYear, setWashuSeriesEndYear] = useState(() => dayjs('2023-12-01').year());
+  const [washuSeriesEndMonth, setWashuSeriesEndMonth] = useState(12);
+  const [washuAppliedSeriesRange, setWashuAppliedSeriesRange] = useState({
+    startYear: 2023,
+    startMonth: 1,
+    endYear: 2023,
+    endMonth: 12,
+  });
+  const [openAqStations, setOpenAqStations] = useState<OpenAqStationRecord[]>([]);
+  const [openAqLoading, setOpenAqLoading] = useState(false);
+  const [openAqError, setOpenAqError] = useState<string | null>(null);
+  const [openAqMapMode, setOpenAqMapMode] = useState<OpenAqMapMode>('daily');
+  const [openAqArchiveCutoffDate, setOpenAqArchiveCutoffDate] = useState<string | null>(null);
+  const [openAqMonitorsOnly, setOpenAqMonitorsOnly] = useState(false);
+  const [selectedOpenAqStation, setSelectedOpenAqStation] = useState<OpenAqStationRecord | null>(null);
+  const [openAqSeries, setOpenAqSeries] = useState<OpenAqTimeseriesPoint[]>([]);
+  const [openAqSeriesLoading, setOpenAqSeriesLoading] = useState(false);
+  const [openAqSeriesError, setOpenAqSeriesError] = useState<string | null>(null);
+  const [openAqDateFrom, setOpenAqDateFrom] = useState(() => dayjs().subtract(6, 'day'));
+  const [openAqDateTo, setOpenAqDateTo] = useState(() => dayjs());
+  const [openAqAppliedRange, setOpenAqAppliedRange] = useState(() => ({
+    start: dayjs().subtract(6, 'day').format('YYYY-MM-DD'),
+    end: dayjs().format('YYYY-MM-DD'),
+  }));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarPeek, setSidebarPeek] = useState(false);
   const [aeronetLoading, setAeronetLoading] = useState(false);
@@ -383,6 +603,10 @@ const DashboardPage = () => {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
   const [analysisAnchor, setAnalysisAnchor] = useState<AnalysisLocationContext | null>(null);
+
+  useEffect(() => {
+    void import('../components/analysis/AnalysisPanel');
+  }, []);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [siteAodMap, setSiteAodMap] = useState<SiteAODMap>({});
@@ -417,6 +641,15 @@ const DashboardPage = () => {
   const { startDate: analysisStartDate, endDate: analysisEndDate } = getDateRange(effectiveSelectedDateStr, analysisRange);
   const merra2AnalysisStartDate = merra2AppliedRange.start;
   const merra2AnalysisEndDate = merra2AppliedRange.end;
+  const washuMapDate = useMemo(() => {
+    const maxSupported = dayjs(MERRA2_DEFAULT_DATE, 'YYYY-MM-DD');
+    return effectiveSelectedDate.isAfter(maxSupported, 'day') ? maxSupported : effectiveSelectedDate;
+  }, [effectiveSelectedDate]);
+  const washuPeriodParts = useMemo(() => washuPeriodFromDate(washuMapDate.format('YYYY-MM-DD')), [washuMapDate]);
+  const washuPeriodLabel =
+    washuPeriod === 'annual'
+      ? String(washuPeriodParts.year)
+      : `${washuPeriodParts.year}-${String(washuPeriodParts.month).padStart(2, '0')}`;
   const analysisRangeLabel =
     analysisRange === '7D' ? 'Last 7 Days' : analysisRange === '30D' ? 'Last 30 Days' : 'Last 90 Days';
 
@@ -504,23 +737,42 @@ const DashboardPage = () => {
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
 
-  // Fire hotspots: prefetch once on mount (7-day WFS; client cache 15 min).
+  // Warm fire cache on dashboard open (silent background refresh).
   useEffect(() => {
+    let cancelled = false;
+    prefetchFires().then((pts) => {
+      if (!cancelled && pts.length > 0) {
+        setFirePoints((prev) => (prev.length > 0 ? prev : pts));
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Spinner only when the fires layer is visible and we still have no points.
+  useEffect(() => {
+    if (!showFires) {
+      setFireLoading(false);
+      return;
+    }
+    if (firePoints.length > 0) {
+      setFireLoading(false);
+      return;
+    }
     let cancelled = false;
     setFireLoading(true);
     getNOAA21VIIRS7DayFromWFS()
-      .then((pts) => { if (!cancelled) setFirePoints(pts); })
+      .then((pts) => { if (!cancelled && pts.length > 0) setFirePoints(pts); })
       .finally(() => { if (!cancelled) setFireLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [showFires, firePoints.length]);
 
   useEffect(() => {
     setAaqeTimeCode(getDefaultAaqeTimeCodeFromUtc());
   }, []);
 
-  // AAQE forecast: load only when layer is active (avoids competing with other layers on mount).
+  // AAQE forecast: load for the whole Forecast workflow on open.
   useEffect(() => {
-    if (!showAAQEForecast) return;
+    if (!preloadForecastLayers) return;
 
     const requested = selectedDate.isAfter(dayjs(), 'day')
       ? dayjs().format('YYYY-MM-DD')
@@ -598,7 +850,7 @@ const DashboardPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedDate, showAAQEForecast]);
+  }, [selectedDate, preloadForecastLayers]);
 
   useEffect(() => {
     if (!aaqeForecastDate) return;
@@ -622,33 +874,63 @@ const DashboardPage = () => {
     }
   }, [analysisStartDate, analysisEndDate, selectedSite?.site, selectedSite?.name, aeronetAodVersion]);
 
-  // Debounced prefetch of AERONET AOD colors — only when AERONET layer is active.
+  // Debounced AERONET AOD colors — preload for Historical workflow.
   useEffect(() => {
-    if (!showAeronet) return;
+    if (!preloadHistoricalLayers) return;
 
     const day = aeronetEnd.format('YYYY-MM-DD');
     let cancelled = false;
     const t = window.setTimeout(() => {
-      getAERONETDataAfrica(day, day, aeronetAodVersion).then((map) => {
-        if (!cancelled) setSiteAodMap(map);
-      });
+      getAERONETDataAfrica(day, day, aeronetAodVersion)
+        .then((map) => {
+          if (!cancelled) setSiteAodMap(map);
+        })
+        .catch(() => {
+          if (!cancelled) setSiteAodMap({});
+        });
     }, 400);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [showAeronet, aeronetEnd, aeronetAodVersion]);
+  }, [preloadHistoricalLayers, aeronetEnd, aeronetAodVersion]);
 
   const handleMerra2StationClick = useCallback((station: MERRA2StationDailyRecord) => {
     setSelectedMerra2Station(station);
     setSelectedSite(null);
     setSelectedFire(null);
     setSelectedAAQE(null);
+    setSelectedOpenAqStation(null);
     setAnalysisAnchor(anchorFromMerra2(station));
     setChartData([]);
     setLeftPanelOpen(false);
     setRightPanelOpen(true);
   }, []);
+
+  const handleOpenAqStationClick = useCallback((station: OpenAqStationRecord) => {
+    setSelectedOpenAqStation(station);
+    setSelectedSite(null);
+    setSelectedFire(null);
+    setSelectedAAQE(null);
+    setSelectedMerra2Station(null);
+    setChartData([]);
+    setLeftPanelOpen(false);
+    setRightPanelOpen(true);
+
+    if (openAqMapMode === 'daily' && !hasOpenAqPm25Value(station)) {
+      getOpenAqStationDay(station.sensorId, effectiveSelectedDateStr)
+        .then((enriched) => {
+          if (!hasOpenAqPm25Value(enriched)) return;
+          setOpenAqStations((prev) =>
+            prev.map((s) => (s.sensorId === enriched.sensorId ? enriched : s))
+          );
+          setSelectedOpenAqStation((prev) =>
+            prev?.sensorId === enriched.sensorId ? enriched : prev
+          );
+        })
+        .catch(() => {});
+    }
+  }, [effectiveSelectedDateStr, openAqMapMode]);
 
   // AERONET site list: load once on mount; cached in localStorage after that.
   useEffect(() => {
@@ -691,8 +973,48 @@ const DashboardPage = () => {
     };
   }, []);
 
+  // Prefetch OpenAQ historical archive date + stations as soon as the dashboard opens
+  // so switching to the OpenAQ layer can render from cache.
   useEffect(() => {
-    if (!showMERRA2PM25) return;
+    let cancelled = false;
+    getOpenAqArchiveInfo()
+      .then((info) => {
+        if (!cancelled && info.cutoffDate) setOpenAqArchiveCutoffDate(info.cutoffDate);
+      })
+      .catch(() => {});
+    prefetchOpenAqHistorical(false).then((date) => {
+      if (!cancelled && date) setOpenAqArchiveCutoffDate(date);
+    });
+    void prefetchOpenAqNrt(false);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // When archive cutoff arrives while Historical OpenAQ is active, snap only from
+  // provisional defaults (today / yesterday / MERRA2 default) or dates after the cutoff.
+  // Do not override intentional older dates the user already picked (e.g. 2021).
+  useEffect(() => {
+    if (!openAqArchiveCutoffDate || workflow !== 'historical' || !layerOn('openaq')) return;
+    const target = openAqHistoricalDefaultDate(openAqArchiveCutoffDate);
+    setSelectedDate((prev) => {
+      if (prev.isSame(target, 'day')) return prev;
+      if (prev.isAfter(target, 'day')) return target;
+      const provisional =
+        prev.isSame(dayjs(), 'day')
+        || prev.isSame(dayjs().subtract(1, 'day'), 'day')
+        || prev.format('YYYY-MM-DD') === MERRA2_DEFAULT_DATE;
+      return provisional ? target : prev;
+    });
+  }, [openAqArchiveCutoffDate, workflow, layerOn]);
+
+  useEffect(() => {
+    if (!merra2LatestDate || workflow !== 'historical' || !layerOn('merra2')) return;
+    setSelectedDate(merra2DefaultDate(merra2LatestDate));
+  }, [merra2LatestDate]);
+
+  useEffect(() => {
+    if (!preloadHistoricalLayers) return;
 
     let cancelled = false;
     const loadStations = async () => {
@@ -764,7 +1086,140 @@ const DashboardPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [merra2RequestedDate, showMERRA2PM25]);
+  }, [merra2RequestedDate, preloadHistoricalLayers]);
+
+  // Warm MERRA2 + WashU grid cubes in IndexedDB before the user switches layers.
+  useEffect(() => {
+    if (!preloadHistoricalLayers) return;
+    void loadMerra2DailyCube(merra2RequestedDate).catch(() => {});
+    void loadWashUGrid(
+      washuPeriod,
+      washuPeriodParts.year,
+      washuPeriod === 'monthly' ? washuPeriodParts.month : null
+    ).catch(() => {});
+  }, [
+    preloadHistoricalLayers,
+    merra2RequestedDate,
+    washuPeriod,
+    washuPeriodParts.year,
+    washuPeriodParts.month,
+  ]);
+
+  useEffect(() => {
+    if (!preloadOpenAqLayers) return;
+    let alive = true;
+    let stopBackground: (() => void) | undefined;
+    const date = effectiveSelectedDateStr;
+    const mode = openAqMapMode;
+    const monitorsOnly = openAqMonitorsOnly;
+
+    setOpenAqError(null);
+    setOpenAqLoading(true);
+
+    const applyColored = (
+      locations: Awaited<ReturnType<typeof getOpenAqLocations>>,
+      stations: OpenAqStationRecord[]
+    ) => {
+      if (!alive) return;
+      const merged = mergeOpenAqStationValues(locations, stations, mode);
+      setOpenAqStations(merged);
+      setSelectedOpenAqStation((prev) =>
+        prev ? merged.find((s) => s.sensorId === prev.sensorId) ?? null : null
+      );
+      if (merged.some(hasOpenAqPm25Value)) setOpenAqLoading(false);
+    };
+
+    (async () => {
+      try {
+        // Paint positions immediately (gray), then replace with AQI colors from the API.
+        const locations = await getOpenAqLocations(monitorsOnly);
+        if (!alive) return;
+
+        const cached = peekOpenAqStations(date, mode, monitorsOnly);
+        const cachedCount = cached?.filter(hasOpenAqPm25Value).length ?? 0;
+        if (cached && cachedCount > 0) {
+          applyColored(locations, cached);
+        } else {
+          setOpenAqStations(skeletonStationsFromLocations(locations, mode));
+        }
+
+        // Always refetch so we never stick on a sparse/click-only snapshot.
+        const stations = await getOpenAqStations(date, mode, monitorsOnly);
+        if (!alive) return;
+        applyColored(locations, stations);
+
+        // Poll while archive (historical) or bulk latest (NRT) fill continues.
+        stopBackground = refreshOpenAqStationsInBackground(
+          date,
+          mode,
+          monitorsOnly,
+          (enriched) => applyColored(locations, enriched)
+        );
+      } catch (err) {
+        if (!alive) return;
+        setOpenAqError(err instanceof Error ? err.message : 'Failed to load OpenAQ stations.');
+        setOpenAqLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+      stopBackground?.();
+    };
+  }, [preloadOpenAqLayers, effectiveSelectedDateStr, openAqMapMode, openAqMonitorsOnly]);
+
+  const openAqAnalysisStartDate = openAqAppliedRange.start;
+  const openAqAnalysisEndDate = openAqAppliedRange.end;
+
+  useEffect(() => {
+    const calendarEnd = dayjs(effectiveSelectedDateStr, 'YYYY-MM-DD');
+    const lastReading = selectedOpenAqStation?.datetime?.slice(0, 10)
+      ?? selectedOpenAqStation?.datetimeLast?.slice(0, 10);
+    const endBase = openAqChartRangeEnd(calendarEnd, lastReading, openAqMapMode);
+    const nextTo = endBase;
+    const nextFrom = endBase.subtract(6, 'day');
+    setOpenAqDateFrom(nextFrom);
+    setOpenAqDateTo(nextTo);
+    setOpenAqAppliedRange({
+      start: nextFrom.format('YYYY-MM-DD'),
+      end: nextTo.format('YYYY-MM-DD'),
+    });
+  }, [effectiveSelectedDateStr, openAqMapMode, selectedOpenAqStation?.sensorId, selectedOpenAqStation?.datetime, selectedOpenAqStation?.datetimeLast]);
+
+  useEffect(() => {
+    if (!showOpenAq || !selectedOpenAqStation || openAqMapMode !== 'daily') {
+      setOpenAqSeries([]);
+      setOpenAqSeriesLoading(false);
+      setOpenAqSeriesError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setOpenAqSeriesLoading(true);
+    setOpenAqSeriesError(null);
+    getOpenAqTimeseries(
+      selectedOpenAqStation.sensorId,
+      openAqAnalysisStartDate,
+      openAqAnalysisEndDate,
+      'daily',
+      {
+        locationId: selectedOpenAqStation.locationId,
+        signal: controller.signal,
+      }
+    )
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        setOpenAqSeries(Array.isArray(res.points) ? res.points : []);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
+        setOpenAqSeries([]);
+        setOpenAqSeriesError(err instanceof Error ? err.message : 'Failed to load OpenAQ time series.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setOpenAqSeriesLoading(false);
+      });
+    return () => controller.abort();
+  }, [showOpenAq, openAqMapMode, selectedOpenAqStation?.sensorId, selectedOpenAqStation?.locationId, openAqAnalysisStartDate, openAqAnalysisEndDate]);
 
   useEffect(() => {
     const endBase = dayjs(merra2RequestedDate, 'YYYY-MM-DD');
@@ -867,6 +1322,7 @@ const DashboardPage = () => {
     setSelectedSite(site);
     setSelectedFire(null);
     setSelectedMerra2Station(null);
+    setSelectedOpenAqStation(null);
     setSelectedAAQE(null);
     setAnalysisAnchor(anchorFromAeronet(site));
     setChartData([]);
@@ -897,6 +1353,7 @@ const DashboardPage = () => {
   const handleFireClick = useCallback((fire: FIRMSFirePoint) => {
     setSelectedSite(null);
     setSelectedMerra2Station(null);
+    setSelectedOpenAqStation(null);
     setSelectedAAQE(null);
     setChartData([]);
     setLeftPanelOpen(false);
@@ -960,6 +1417,7 @@ const DashboardPage = () => {
     });
     setSelectedSite(null);
     setSelectedMerra2Station(null);
+    setSelectedOpenAqStation(null);
     setSelectedFire(null);
     setChartData([]);
     setLeftPanelOpen(false);
@@ -976,21 +1434,82 @@ const DashboardPage = () => {
     setFireChartRectDrawActive(false);
   }, []);
 
-  const switchLayer = useCallback((next: LayerMode) => {
-    setActiveLayer((prev) => {
-      if (prev === next) return prev;
-      if (prev === 'fires') {
-        setCircleSelectActive(false);
-        setCircleCenter(null);
-        setFireChartRectDrawActive(false);
-        setFireChartBounds(null);
+  const toggleLayer = useCallback((layer: LayerMode) => {
+    setActiveLayers((prev) => {
+      const isOn = prev.includes(layer);
+      if (isOn) {
+        if (prev.length <= 1) return prev;
+        if (layer === 'fires') {
+          setCircleSelectActive(false);
+          setCircleCenter(null);
+          setFireChartRectDrawActive(false);
+          setFireChartBounds(null);
+        }
+        if (layer === 'openaq') setSelectedOpenAqStation(null);
+        if (layer === 'fires') setSelectedFire(null);
+        if (layer === 'merra2') setSelectedMerra2Station(null);
+        if (layer === 'aaqe') setSelectedAAQE(null);
+        if (layer === 'washu') setWashuPin(null);
+        if (layer === 'aeronet') setSelectedSite(null);
+        setPrimaryLayer((p) => (p === layer ? prev.find((l) => l !== layer) ?? p : p));
+        return prev.filter((l) => l !== layer);
       }
-      if (next === 'merra2' && merra2LatestDate) {
-        setSelectedDate(dayjs(merra2LatestDate, 'YYYY-MM-DD'));
+
+      if (layer === 'merra2') {
+        setSelectedDate(merra2DefaultDate(merra2LatestDate));
+      } else if (workflow === 'historical' && layer === 'openaq') {
+        setSelectedDate(openAqHistoricalDefaultDate(openAqArchiveCutoffDate));
+        setOpenAqMapMode('daily');
+      } else if (workflow === 'historical' && layer === 'aeronet') {
+        setSelectedDate(todayDefaultDate());
+      } else if (workflow === 'historical' && layer === 'washu') {
+        setSelectedDate(dayjs(MERRA2_DEFAULT_DATE, 'YYYY-MM-DD'));
       }
-      return next;
+      if (layer === 'washu') {
+        const maxSupported = dayjs(MERRA2_DEFAULT_DATE, 'YYYY-MM-DD');
+        setSelectedDate((prevDate) => (prevDate.isAfter(maxSupported, 'day') ? maxSupported : prevDate));
+        setWashuPin(null);
+        setWashuSeries([]);
+      }
+      if (layer === 'openaq' && workflow === 'nrt') {
+        setSelectedDate(todayDefaultDate());
+        setOpenAqMapMode('latest');
+      }
+      setPrimaryLayer(layer);
+      return [...prev, layer];
     });
-  }, [merra2LatestDate]);
+  }, [merra2LatestDate, openAqArchiveCutoffDate, workflow]);
+
+  const changeWorkflow = useCallback(
+    (next: DashboardV1Workflow) => {
+      setWorkflow(next);
+      const defaultLayer = DASHBOARD_V1_WORKFLOW_META[next].defaultLayer;
+      setActiveLayers([defaultLayer]);
+      setPrimaryLayer(defaultLayer);
+      if (next === 'nrt') {
+        setSelectedDate(todayDefaultDate());
+        setOpenAqMapMode('latest');
+        setSelectedOpenAqStation(null);
+      }
+      if (next === 'historical') {
+        setOpenAqMapMode('daily');
+        setSelectedDate(todayDefaultDate());
+      }
+    },
+    []
+  );
+
+  const renderLayerToggle = (layer: LayerMode, loading?: boolean) => (
+    <label key={layer} className={`layer-checkbox${layerOn(layer) ? ' layer-checkbox--on' : ''}`}>
+      <input
+        type="checkbox"
+        checked={layerOn(layer)}
+        onChange={() => toggleLayer(layer)}
+      />
+      {DASHBOARD_V1_LAYER_LABELS[layer]}
+      {loading ? ' (loading…)' : ''}
+    </label>
+  );
 
   const applyMerra2Range = useCallback(() => {
     const from = merra2DateFrom;
@@ -1015,21 +1534,105 @@ const DashboardPage = () => {
     });
   }, [merra2RequestedDate]);
 
+  const applyOpenAqRange = useCallback(() => {
+    const from = openAqDateFrom;
+    const to = openAqDateTo;
+    const start = from.isAfter(to, 'day') ? to : from;
+    const end = from.isAfter(to, 'day') ? from : to;
+    setOpenAqAppliedRange({
+      start: start.format('YYYY-MM-DD'),
+      end: end.format('YYYY-MM-DD'),
+    });
+  }, [openAqDateFrom, openAqDateTo]);
+
+  const resetOpenAqRange = useCallback(() => {
+    const calendarEnd = dayjs(effectiveSelectedDateStr, 'YYYY-MM-DD');
+    const lastReading = selectedOpenAqStation?.datetime?.slice(0, 10)
+      ?? selectedOpenAqStation?.datetimeLast?.slice(0, 10);
+    const endBase = openAqChartRangeEnd(calendarEnd, lastReading, openAqMapMode);
+    const nextTo = endBase;
+    const nextFrom = endBase.subtract(6, 'day');
+    setOpenAqDateFrom(nextFrom);
+    setOpenAqDateTo(nextTo);
+    setOpenAqAppliedRange({
+      start: nextFrom.format('YYYY-MM-DD'),
+      end: nextTo.format('YYYY-MM-DD'),
+    });
+  }, [effectiveSelectedDateStr, openAqMapMode, selectedOpenAqStation?.datetime, selectedOpenAqStation?.datetimeLast]);
+
+  const handleWashuMapClick = useCallback((lat: number, lon: number) => {
+    setWashuPin({ lat, lon, pm25: null });
+    setSelectedSite(null);
+    setSelectedFire(null);
+    setSelectedMerra2Station(null);
+    setSelectedOpenAqStation(null);
+    setSelectedAAQE(null);
+    setLeftPanelOpen(false);
+    setRightPanelOpen(true);
+  }, []);
+
+  const applyWashuSeriesRange = useCallback(() => {
+    setWashuAppliedSeriesRange({
+      startYear: washuSeriesStartYear,
+      startMonth: washuSeriesStartMonth,
+      endYear: washuSeriesEndYear,
+      endMonth: washuSeriesEndMonth,
+    });
+  }, [washuSeriesStartYear, washuSeriesStartMonth, washuSeriesEndYear, washuSeriesEndMonth]);
+
+  useEffect(() => {
+    if (!showWashU || !washuPin) return;
+    let cancelled = false;
+    setWashuSeriesLoading(true);
+    setWashuSeriesError(null);
+    fetchWashUTimeseries({
+      lat: washuPin.lat,
+      lon: washuPin.lon,
+      startYear: washuAppliedSeriesRange.startYear,
+      startMonth: washuAppliedSeriesRange.startMonth,
+      endYear: washuAppliedSeriesRange.endYear,
+      endMonth: washuAppliedSeriesRange.endMonth,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        setWashuSeries(res.points ?? []);
+        const count = res.points?.length ?? 0;
+        const expected = res.monthCount ?? 0;
+        if (count === 0) {
+          setWashuSeriesError('No PM2.5 values for this location in the selected range.');
+        } else if (expected > 0 && count < expected) {
+          setWashuSeriesError(null);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setWashuSeries([]);
+        setWashuSeriesError(err instanceof Error ? err.message : 'WashU timeseries failed');
+      })
+      .finally(() => {
+        if (!cancelled) setWashuSeriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showWashU, washuPin, washuAppliedSeriesRange]);
+
   const merra2PanelDataDate = merra2DataDate ?? merra2RequestedDate;
   const merra2PanelStation = useMemo(() => {
-    if (!showMERRA2PM25 || !selectedMerra2Station) return null;
+    if (!selectedMerra2Station) return null;
     if (!merra2DataDate) return selectedMerra2Station;
     return (
       merra2Stations.find((s) => s.sitename === selectedMerra2Station.sitename) ??
       selectedMerra2Station
     );
-  }, [showMERRA2PM25, selectedMerra2Station, merra2DataDate, merra2Stations]);
-  const merra2PanelMetricsLoading = showMERRA2PM25 && Boolean(selectedMerra2Station) && merra2Loading;
+  }, [selectedMerra2Station, merra2DataDate, merra2Stations]);
+  const merra2PanelMetricsLoading = Boolean(selectedMerra2Station) && merra2Loading;
 
-  const activeSelectedSite = showAeronet ? selectedSite : null;
-  const activeSelectedFire = showFires ? selectedFire : null;
+  const activeSelectedSite = selectedSite;
+  const activeSelectedFire = selectedFire;
   const activeSelectedMerra2Station = merra2PanelStation;
-  const activeSelectedAAQE = showAAQEForecast ? selectedAAQE : null;
+  const activeSelectedOpenAq = selectedOpenAqStation;
+  const activeSelectedAAQE = selectedAAQE;
   const aaqeForecastDateOptions = useMemo(() => {
     if (!showAAQEForecast) return [];
     const base = selectedDate.isAfter(dayjs(), 'day') ? dayjs() : selectedDate;
@@ -1083,8 +1686,54 @@ const DashboardPage = () => {
   const selectedMerra2Aqi = activeSelectedMerra2Station
     ? calculateAQIFromPm25(activeSelectedMerra2Station.pm25)
     : null;
+  const selectedOpenAqDayPoint = useMemo(() => {
+    if (!activeSelectedOpenAq) return null;
+    if (openAqMapMode === 'daily') {
+      return openAqSeries.find((p) => p.date === effectiveSelectedDateStr) ?? null;
+    }
+    if (openAqSeries.length === 0) return null;
+    return openAqSeries[openAqSeries.length - 1];
+  }, [activeSelectedOpenAq, openAqMapMode, openAqSeries, effectiveSelectedDateStr]);
+  const selectedOpenAqPanelStation = useMemo(() => {
+    if (!activeSelectedOpenAq) return null;
+    if (hasOpenAqPm25Value(activeSelectedOpenAq)) return activeSelectedOpenAq;
+    if (selectedOpenAqDayPoint) {
+      return {
+        ...activeSelectedOpenAq,
+        pm25: selectedOpenAqDayPoint.pm25,
+        datetime: selectedOpenAqDayPoint.datetime,
+        hasReading: true,
+      };
+    }
+    return activeSelectedOpenAq;
+  }, [activeSelectedOpenAq, selectedOpenAqDayPoint]);
+  const selectedOpenAqAqi =
+    selectedOpenAqPanelStation && hasOpenAqPm25Value(selectedOpenAqPanelStation)
+      ? calculateAQIFromPm25(selectedOpenAqPanelStation.pm25!)
+      : null;
+  const openAqWithDataCount = useMemo(
+    () => openAqStations.filter(hasOpenAqPm25Value).length,
+    [openAqStations]
+  );
+  const openAqDailyModeIsToday = useMemo(
+    () => openAqMapMode === 'daily' && effectiveSelectedDateStr === dayjs().format('YYYY-MM-DD'),
+    [openAqMapMode, effectiveSelectedDateStr]
+  );
+  const openAqChartDisplayPoints = useMemo(() => {
+    if (openAqSeries.length > 0) return openAqSeries;
+    if (!selectedOpenAqStation) return [];
+    return seedOpenAqTimeseriesFromStation(
+      selectedOpenAqStation,
+      openAqMapMode === 'daily' ? effectiveSelectedDateStr : undefined
+    );
+  }, [openAqSeries, selectedOpenAqStation, openAqMapMode, effectiveSelectedDateStr]);
   const hasMapSelection = Boolean(
-    selectedSite || selectedFire || selectedMerra2Station || selectedAAQE
+    activeSelectedSite ||
+      activeSelectedFire ||
+      activeSelectedMerra2Station ||
+      activeSelectedAAQE ||
+      activeSelectedOpenAq ||
+      washuPin
   );
   const showRightPanel = hasMapSelection || analysisAnchor != null;
   const closeMobileDrawers = useCallback(() => {
@@ -1137,19 +1786,31 @@ const DashboardPage = () => {
                 label="Select Date:"
                 value={selectedDate}
                 onChange={(d) => d && setSelectedDate(d)}
+                maxDate={dayjs()}
                 slotProps={{ textField: { size: 'small', fullWidth: true } }}
               />
             </div>
             <div className="sidebar-section">
+              <h6>Analysis Workflow</h6>
+              <div className="workflow-tabs" role="group" aria-label="Analysis workflow">
+                {DASHBOARD_V1_WORKFLOW_TABS.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`workflow-btn${workflow === id ? ' active' : ''}`}
+                    onClick={() => changeWorkflow(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="workflow-desc">{DASHBOARD_V1_WORKFLOW_META[workflow].description}</p>
+            </div>
+            <div className="sidebar-section">
               <h6>Data Layers</h6>
-              <label className="layer-checkbox">
-                <input
-                  type="checkbox"
-                  checked={activeLayer === 'aeronet'}
-                  onChange={() => switchLayer('aeronet')}
-                />
-                AERONET Sites {aeronetLoading && '(loading…)'}
-              </label>
+              {workflow === 'historical' && (
+                <>
+              {renderLayerToggle('aeronet', aeronetLoading)}
               {showAeronet && (
                 <div className="aeronet-aod-version aeronet-subcontrol">
                   <label style={{ fontSize: 12, color: '#666', fontWeight: 600, display: 'block', marginTop: 6 }}>
@@ -1205,58 +1866,7 @@ const DashboardPage = () => {
                   </select>
                 </>
               )}
-              <label className="layer-checkbox">
-                <input
-                  type="checkbox"
-                  checked={activeLayer === 'fires'}
-                  onChange={() => switchLayer('fires')}
-                />
-                Fire Hotspots (VIIRS) {fireLoading && '(loading…)'}
-              </label>
-              {showFires && (
-                <>
-                  <label className="layer-checkbox fire-subcontrol">
-                    <input
-                      type="checkbox"
-                      checked={fireChartRectDrawActive}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setFireChartRectDrawActive(checked);
-                      }}
-                    />
-                    Filter fire charts by rectangle (drag on map)
-                  </label>
-                  {fireChartRectDrawActive && (
-                    <small className="layer-tip" style={{ marginTop: -4 }}>
-                      Click and drag on the map to set the chart region.
-                    </small>
-                  )}
-                  {fireChartBounds && (
-                    <button type="button" className="export-csv-btn" style={{ marginTop: 6 }} onClick={clearFireChartRectangle}>
-                      Clear chart rectangle
-                    </button>
-                  )}
-                </>
-              )}
-              <label className="layer-checkbox">
-                <input
-                  type="checkbox"
-                  checked={activeLayer === 'viirs'}
-                  onChange={() => switchLayer('viirs')}
-                />
-                VIIRS Imagery
-              </label>
-              {showVIIRSImagery && (
-                <small className="layer-tip">NASA GIBS · True Color (S-NPP) · Uses selected date</small>
-              )}
-              <label className="layer-checkbox">
-                <input
-                  type="checkbox"
-                  checked={activeLayer === 'merra2'}
-                  onChange={() => switchLayer('merra2')}
-                />
-                MERRA2 CNN PM2.5 {merra2Loading && '(loading…)'}
-              </label>
+              {renderLayerToggle('merra2', merra2Loading)}
               {showMERRA2PM25 && (
                 <>
                   <label className="layer-checkbox fire-subcontrol">
@@ -1288,6 +1898,28 @@ const DashboardPage = () => {
                   )}
                   {merra2Error && <small className="layer-tip layer-tip-warn">⚠ {merra2Error}</small>}
                   {merra2Notice && <small className="layer-tip">{merra2Notice}</small>}
+                  {merra2ShowGridOverlay && (
+                    <div className="aeronet-subcontrol" style={{ marginTop: 8 }}>
+                      <label style={{ fontSize: 12, color: '#666', fontWeight: 600, display: 'block' }}>
+                        Grid hour (UTC): {String(merra2GridHour).padStart(2, '0')}:00
+                        {merra2GridLoading && ' · loading daily file…'}
+                      </label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={23}
+                        step={1}
+                        value={merra2GridHour}
+                        onChange={(e) => setMerra2GridHour(Number(e.target.value))}
+                        style={{ width: '100%', marginTop: 6 }}
+                        aria-label="MERRA2 grid UTC hour"
+                      />
+                      <small className="layer-tip" style={{ display: 'block', marginTop: 4 }}>
+                        Daily NetCDF has 24 hourly slices. Data loads once per date and caches in your browser.
+                        Native 0.625°×0.5° cells — no interpolation.
+                      </small>
+                    </div>
+                  )}
                   {merra2ShowGridOverlay && merra2GridSource === 'sample' && (
                     <small className="layer-tip layer-tip-warn">
                       ⚠ Grid showing sample data — check Earthdata credentials and restart backend
@@ -1296,14 +1928,137 @@ const DashboardPage = () => {
                   )}
                 </>
               )}
-              <label className="layer-checkbox">
-                <input
-                  type="checkbox"
-                  checked={activeLayer === 'aaqe'}
-                  onChange={() => switchLayer('aaqe')}
-                />
-                AAQE PM2.5 Forecast {aaqeLoading && '(loading…)'}
-              </label>
+              {renderLayerToggle('washu', washuGridLoading)}
+              {showWashU && (
+                <>
+                  <div className="aeronet-subcontrol" style={{ marginTop: 8 }}>
+                    <label style={{ fontSize: 12, color: '#666', fontWeight: 600, display: 'block' }}>
+                      Temporal product
+                    </label>
+                    <select
+                      className="site-select"
+                      style={{ marginTop: 4 }}
+                      value={washuPeriod}
+                      onChange={(e) => setWashuPeriod(e.target.value as 'monthly' | 'annual')}
+                    >
+                      <option value="monthly">Monthly mean</option>
+                      <option value="annual">Annual mean</option>
+                    </select>
+                  </div>
+                  <small className="layer-tip">
+                    Select date sets {washuPeriod === 'monthly' ? 'year + month' : 'year'} (1998–2023). Showing{' '}
+                    <strong>{washuPeriodLabel}</strong>. Click the map to pin a location for time series.
+                  </small>
+                  {washuGridSource === 'sample' && (
+                    <small className="layer-tip layer-tip-warn">
+                      ⚠ Grid showing sample data — SatPM download or Python worker failed
+                      {washuGridFallbackReason ? ` (${washuGridFallbackReason})` : ''}.
+                      Install <code>netCDF4</code> and ensure outbound HTTPS is allowed.
+                    </small>
+                  )}
+                </>
+              )}
+              {renderLayerToggle('openaq', openAqLoading)}
+              {showOpenAq && (
+                <>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={openAqMonitorsOnly}
+                      onChange={(e) => setOpenAqMonitorsOnly(e.target.checked)}
+                    />
+                    Reference monitors only
+                  </label>
+                  <small className="layer-tip">
+                    Daily mean PM2.5 for the selected map date
+                    {openAqArchiveCutoffDate
+                      ? ` (latest archive day: ${formatDateMonthDayYear(openAqArchiveCutoffDate)})`
+                      : ''}.
+                  </small>
+                  {openAqArchiveCutoffDate && effectiveSelectedDateStr !== openAqArchiveCutoffDate && (
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      style={{ marginTop: 6 }}
+                      onClick={() => setSelectedDate(openAqHistoricalDefaultDate(openAqArchiveCutoffDate))}
+                    >
+                      Use latest archive date ({formatDateMonthDayYear(openAqArchiveCutoffDate)})
+                    </button>
+                  )}
+                  {openAqDailyModeIsToday ? (
+                    <small className="layer-tip layer-tip-warn">
+                      Today isn&apos;t finished yet — pick the latest archive date or earlier for a daily mean.
+                    </small>
+                  ) : (
+                    openAqStations.length > 0 && (
+                      <small className="layer-tip">
+                        {openAqWithDataCount} of {openAqStations.length} stations with PM2.5
+                        {openAqWithDataCount === 0 && !openAqLoading ? ' for this date' : ''}
+                        {openAqLoading ? ' · loading…' : ''}.
+                        {' '}Gray = no reading that day; colors = AQI from PM2.5.
+                      </small>
+                    )
+                  )}
+                  {openAqError && <small className="layer-tip layer-tip-warn">⚠ {openAqError}</small>}
+                </>
+              )}
+
+                </>
+              )}
+              {workflow === 'nrt' && (
+                <>
+              {renderLayerToggle('fires', fireLoading)}
+              {showFires && (
+                <>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={fireChartRectDrawActive}
+                      onChange={(e) => setFireChartRectDrawActive(e.target.checked)}
+                    />
+                    Filter fire charts by rectangle (drag on map)
+                  </label>
+                  {fireChartRectDrawActive && (
+                    <small className="layer-tip">Drag on the map to set the chart region.</small>
+                  )}
+                  {fireChartBounds && (
+                    <button type="button" className="export-csv-btn" style={{ marginTop: 6 }} onClick={clearFireChartRectangle}>
+                      Clear chart rectangle
+                    </button>
+                  )}
+                </>
+              )}
+              {renderLayerToggle('viirs')}
+              {showVIIRSImagery && (
+                <small className="layer-tip">NASA GIBS VIIRS NOAA-21 true-color imagery for the selected date.</small>
+              )}
+              {renderLayerToggle('openaq', openAqLoading)}
+              {showOpenAq && (
+                <>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={openAqMonitorsOnly}
+                      onChange={(e) => setOpenAqMonitorsOnly(e.target.checked)}
+                    />
+                    Reference monitors only
+                  </label>
+                  <small className="layer-tip">
+                    OpenAQ readings for the selected date only. No reading that day = gray.
+                  </small>
+                  {openAqStations.length > 0 && (
+                    <small className="layer-tip">
+                      {openAqWithDataCount} of {openAqStations.length} stations with PM2.5.
+                    </small>
+                  )}
+                  {openAqError && <small className="layer-tip layer-tip-warn">⚠ {openAqError}</small>}
+                </>
+              )}
+                </>
+              )}
+              {workflow === 'forecast' && (
+                <>
+              {renderLayerToggle('aaqe', aaqeLoading)}
               {showAAQEForecast && (
                 <small className="layer-tip">
                   Select Date = model initialization. Forecast dates: selected day + next 2 days.
@@ -1368,22 +2123,7 @@ const DashboardPage = () => {
               {showAAQEForecast && aaqeError && (
                 <small className="layer-tip layer-tip-warn">⚠ {aaqeError}</small>
               )}
-              {showAeronet && (
-                <div className="aod-classification-legend">
-                  <strong>AOD Classification:</strong>
-                  <ul>
-                    {AOD_CLASSIFICATION_LEGEND.map(({ range, label, color }) => (
-                      <li key={range}>
-                        <span className="aod-legend-swatch" style={{ backgroundColor: color }} />
-                        {range} → {label}
-                      </li>
-                    ))}
-                    <li>
-                      <span className="aod-legend-swatch" style={{ backgroundColor: 'rgba(128, 128, 128, 0.8)' }} />
-                      No AOD data
-                    </li>
-                  </ul>
-                </div>
+                </>
               )}
             </div>
             </div>
@@ -1445,6 +2185,18 @@ const DashboardPage = () => {
                 <p className="map-loading-text map-loading-text--small">Loading MERRA2 stations…</p>
               </div>
             )}
+            {showWashU && washuGridLoading && (
+              <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
+                <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text map-loading-text--small">Loading WashU SatPM2.5 grid…</p>
+              </div>
+            )}
+            {showOpenAq && openAqLoading && openAqStations.length === 0 && (
+              <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
+                <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text map-loading-text--small">Loading OpenAQ stations…</p>
+              </div>
+            )}
             <div className="map-container">
               <MapVisualization
                 firePoints={firePoints}
@@ -1457,13 +2209,33 @@ const DashboardPage = () => {
                 showMerra2Stations={showMERRA2PM25 && merra2ShowStations}
                 showMerra2GridOverlay={merra2ShowGridOverlay}
                 merra2GridDate={merra2RequestedDate}
+                merra2GridHour={merra2GridHour}
                 onMerra2GridLoadingChange={setMerra2GridLoading}
                 onMerra2GridSourceChange={(source, reason) => {
                   setMerra2GridSource(source);
                   setMerra2GridFallbackReason(reason ?? null);
                 }}
                 merra2GridSource={merra2GridSource}
+                showWashU={showWashU}
+                washuPeriod={washuPeriod}
+                washuYear={washuPeriodParts.year}
+                washuMonth={washuPeriod === 'monthly' ? washuPeriodParts.month : null}
+                washuPeriodLabel={washuPeriodLabel}
+                onWashuGridLoadingChange={setWashuGridLoading}
+                onWashuGridSourceChange={(source, reason) => {
+                  setWashuGridSource(source);
+                  setWashuGridFallbackReason(reason ?? null);
+                }}
+                washuGridSource={washuGridSource}
+                onWashuMapClick={handleWashuMapClick}
+                onWashuPm25Sample={(sample) => {
+                  if (!sample) return;
+                  setWashuPin((prev) => (prev ? { ...prev, pm25: sample.value } : prev));
+                }}
                 showAAQEForecast={showAAQEForecast}
+                showOpenAq={showOpenAq}
+                openAqStations={openAqStations}
+                onOpenAqStationClick={handleOpenAqStationClick}
                 selectedDate={selectedDateForMap}
                 onFireClick={handleFireClick}
                 onAeronetSiteClick={handleAeronetSiteClick}
@@ -1484,6 +2256,7 @@ const DashboardPage = () => {
                 aaqeForecastDate={aaqeForecastDate ?? undefined}
                 onAAQEForecastClick={handleAAQEForecastClick}
               />
+
               {showAAQEForecast && activeSelectedAAQE && aaqeThreeDaySeries.length > 0 && (
                 <div className="aaqe-modal-overlay" role="dialog" aria-label="AAQE 3-day forecast">
                   <div className="aaqe-modal-card">
@@ -1739,6 +2512,199 @@ const DashboardPage = () => {
                 )}
               </div>
             )}
+            {showWashU && washuPin && (
+              <div className="charts-section" style={{ paddingTop: 14 }}>
+                <div
+                  className="charts-section-header"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginBottom: 8,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <h6 style={{ margin: 0 }}>WashU monthly PM2.5 time series</h6>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: 12, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      From
+                      <input
+                        type="number"
+                        min={1998}
+                        max={2023}
+                        value={washuSeriesStartYear}
+                        onChange={(e) => setWashuSeriesStartYear(Number(e.target.value))}
+                        style={{ width: 72, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                      /
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        value={washuSeriesStartMonth}
+                        onChange={(e) => setWashuSeriesStartMonth(Number(e.target.value))}
+                        style={{ width: 52, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 12, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      To
+                      <input
+                        type="number"
+                        min={1998}
+                        max={2023}
+                        value={washuSeriesEndYear}
+                        onChange={(e) => setWashuSeriesEndYear(Number(e.target.value))}
+                        style={{ width: 72, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                      /
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        value={washuSeriesEndMonth}
+                        onChange={(e) => setWashuSeriesEndMonth(Number(e.target.value))}
+                        style={{ width: 52, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                    </label>
+                    <button type="button" className="export-csv-btn" style={{ marginTop: 0 }} onClick={applyWashuSeriesRange}>
+                      Apply
+                    </button>
+                  </div>
+                </div>
+                <small className="layer-tip" style={{ marginTop: 2, display: 'block', textAlign: 'left' }}>
+                  Location: {washuPin.lat.toFixed(3)}°, {washuPin.lon.toFixed(3)}° · Monthly files from ACAG SatPM V6.GL.03
+                  (Africa).
+                </small>
+                {washuSeriesError && (
+                  <small className="layer-tip layer-tip-warn" style={{ display: 'block' }}>
+                    ⚠ {washuSeriesError}
+                  </small>
+                )}
+                {washuSeriesLoading ? (
+                  <div className="chart-loading-box">
+                    <div className="chart-loading-spinner" />
+                    <p className="chart-loading">
+                      Loading WashU monthly series… First request may download NetCDF files from AWS (one per month).
+                    </p>
+                  </div>
+                ) : (
+                  <Suspense fallback={<ChartLoadingFallback />}>
+                    <div className="charts-row">
+                      <div className="chart-box" style={{ minWidth: 380 }}>
+                        <div className="chart-container">
+                          <WashUTimeSeriesChart
+                            points={washuSeries}
+                            startYear={washuAppliedSeriesRange.startYear}
+                            startMonth={washuAppliedSeriesRange.startMonth}
+                            endYear={washuAppliedSeriesRange.endYear}
+                            endMonth={washuAppliedSeriesRange.endMonth}
+                            title={`WashU PM2.5 · ${washuPin.lat.toFixed(2)}°, ${washuPin.lon.toFixed(2)}°`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Suspense>
+                )}
+              </div>
+            )}
+            {showOpenAq && selectedOpenAqStation && workflow === 'historical' && (
+              <div className="charts-section" style={{ paddingTop: 14 }}>
+                <div
+                  className="charts-section-header"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginBottom: 8,
+                  }}
+                >
+                  <h6 style={{ margin: 0 }}>OpenAQ Ground PM2.5 Analysis</h6>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <DatePicker
+                      label="From"
+                      value={openAqDateFrom}
+                      onChange={(d) => d && setOpenAqDateFrom(d)}
+                      slotProps={{ textField: { size: 'small' } }}
+                    />
+                    <DatePicker
+                      label="To"
+                      value={openAqDateTo}
+                      onChange={(d) => d && setOpenAqDateTo(d)}
+                      slotProps={{ textField: { size: 'small' } }}
+                    />
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      style={{ marginTop: 0, height: 40, padding: '0 14px' }}
+                      onClick={applyOpenAqRange}
+                    >
+                      Apply
+                    </button>
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      style={{ marginTop: 0, height: 40, padding: '0 14px' }}
+                      onClick={resetOpenAqRange}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+                <small className="layer-tip" style={{ marginTop: 2, display: 'block', textAlign: 'left' }}>
+                  Station: {selectedOpenAqStation.name} · Showing {openAqAnalysisStartDate} to {openAqAnalysisEndDate}
+                  {openAqSeriesLoading ? ' · Loading history…' : ''}
+                </small>
+                {openAqChartDisplayPoints.length === 0 && openAqSeriesLoading ? (
+                  <div className="chart-loading-box">
+                    <div className="chart-loading-spinner" />
+                    <p className="chart-loading">Loading OpenAQ series for {selectedOpenAqStation.name}…</p>
+                  </div>
+                ) : (
+                  <Suspense fallback={<ChartLoadingFallback />}>
+                    <div className="charts-row">
+                      <div className="chart-box" style={{ minWidth: 380 }}>
+                        <div className="chart-container">
+                          <OpenAqTimeSeriesChart
+                            points={openAqChartDisplayPoints}
+                            startDate={dayjs(openAqAnalysisStartDate)}
+                            endDate={dayjs(openAqAnalysisEndDate)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {openAqSeriesError && openAqSeries.length === 0 && (
+                      <small className="layer-tip layer-tip-warn" style={{ display: 'block', marginTop: 8 }}>
+                        Could not load full PM2.5 history ({openAqSeriesError}).
+                        {openAqChartDisplayPoints.length > 0
+                          ? ' Showing the map reading while history is unavailable.'
+                          : ''}
+                      </small>
+                    )}
+                    {openAqSeries.length === 0 && !openAqSeriesLoading && openAqChartDisplayPoints.length === 0 && (
+                      <small className="layer-tip layer-tip-warn" style={{ display: 'block', marginTop: 8 }}>
+                        {openAqSeriesError
+                          ? `Could not load PM2.5 history (${openAqSeriesError}). `
+                          : 'No PM2.5 history in this date range. '}
+                        {!openAqSeriesError
+                          && (selectedOpenAqStation.datetime?.slice(0, 10)
+                          ?? selectedOpenAqStation.datetimeLast?.slice(0, 10)) && (
+                          <>
+                            This station&apos;s last OpenAQ reading was on{' '}
+                            {formatDateMonthDayYear(
+                              selectedOpenAqStation.datetime?.slice(0, 10)
+                                ?? selectedOpenAqStation.datetimeLast!.slice(0, 10)
+                            )}
+                            . Click Reset or pick dates on or before that day.
+                          </>
+                        )}
+                      </small>
+                    )}
+                  </Suspense>
+                )}
+              </div>
+            )}
           </main>
 
           {!rightPanelOpen && showRightPanel && !isCompactLayout && (
@@ -1868,6 +2834,33 @@ const DashboardPage = () => {
                     aqi={selectedMerra2Aqi}
                     dataDate={merra2PanelDataDate}
                     metricsLoading={merra2PanelMetricsLoading}
+                  />
+                ) : washuPin ? (
+                  <WashUSelectedPanel
+                    lat={washuPin.lat}
+                    lon={washuPin.lon}
+                    periodLabel={washuPeriodLabel}
+                    pm25={washuPin.pm25}
+                    loading={washuGridLoading}
+                  />
+                ) : activeSelectedOpenAq ? (
+                  <OpenAqSelectedPanel
+                    station={selectedOpenAqPanelStation ?? activeSelectedOpenAq}
+                    aqi={selectedOpenAqAqi}
+                    dataDate={
+                      openAqMapMode === 'daily'
+                        ? effectiveSelectedDateStr
+                        : (
+                            activeSelectedOpenAq.datetime?.slice(0, 10) ||
+                            activeSelectedOpenAq.datetimeLast?.slice(0, 10) ||
+                            effectiveSelectedDateStr
+                          )
+                    }
+                    metricsLoading={
+                      (openAqLoading || openAqSeriesLoading)
+                      && !hasOpenAqPm25Value(activeSelectedOpenAq)
+                      && !selectedOpenAqDayPoint
+                    }
                   />
                 ) : activeSelectedAAQE ? (
                   <AaqeSelectedPanel data={activeSelectedAAQE} threeDayRows={aaqeThreeDayRows} />

@@ -18,10 +18,7 @@ export const ANALYSIS_VARIABLES: AnalysisVariableDef[] = [
   { id: 'fire_count',      label: 'Fire Count (100 km)', unit: 'fires/day',     source: 'firms',   yAxis: 'right' },
 ];
 
-export const DEFAULT_ANALYSIS_VARIABLES: AnalysisVariableId[] = [
-  'aeronet_aod_500',
-  'merra2_pm25',
-];
+export const DEFAULT_ANALYSIS_VARIABLES: AnalysisVariableId[] = ANALYSIS_VARIABLES.map((v) => v.id);
 
 export function getVariableDef(id: AnalysisVariableId): AnalysisVariableDef | undefined {
   return ANALYSIS_VARIABLES.find((v) => v.id === id);

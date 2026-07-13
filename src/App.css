@@ -1,12 +1,5 @@
-.App {
-  min-height: 100vh;
-  background-color: #f8f9fa;
-  --navbar-height: 60px;
-  overflow-x: hidden;
-}
+/* App shell — dashboard layout uses its own styles; see aaqeTheme.css for global tokens */
 
-@media (max-width: 991px) {
-  .App {
-    --navbar-height: 56px;
-  }
+.App--dashboard-route {
+  background: #f8f9fa;
 }

@@ -199,7 +199,7 @@ export async function fetchAnalysisSeries(
   end: string,
   aeronetAodVersion: AERONETAODVersion
 ): Promise<NormalizedSeries[]> {
-  const TIMEOUT_MS = 12_000;
+  const TIMEOUT_MS = 8_000;
 
   const promises = variableIds.map((vid): Promise<NormalizedSeries | null> => {
     const def = getVariableDef(vid);

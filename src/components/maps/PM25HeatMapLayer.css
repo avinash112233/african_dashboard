@@ -11,3 +11,25 @@
   pointer-events: none;
   image-rendering: auto;
 }
+
+.leaflet-image-layer.pm25-image-overlay--native {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Modest MERRA2 smooth — browser bilinear on a lightly upsampled canvas */
+.leaflet-image-layer.pm25-image-overlay--light-smooth {
+  image-rendering: auto;
+  pointer-events: none;
+}
+
+.leaflet-image-layer.washu-image-overlay--smooth {
+  image-rendering: auto;
+  pointer-events: none;
+}
+
+/* WashU — light upscale; modest browser smooth on stretch (matches MERRA2 light-smooth) */
+.leaflet-image-layer.washu-image-overlay--light {
+  image-rendering: auto;
+  pointer-events: none;
+}

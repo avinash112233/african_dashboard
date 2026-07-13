@@ -1,8 +1,15 @@
 /* ── Panel wrapper ──────────────────────────────────────────────── */
 .analysis-panel {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 2px solid #e5e7eb;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* ── Inline charts (always visible — no modal) ─────────────────── */
+.analysis-charts-inline {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px dashed #e5e7eb;
 }
 
 .analysis-panel-title-row {
