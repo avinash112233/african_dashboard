@@ -7,7 +7,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { hourGridFromCube, loadMerra2DailyCube, type Merra2DailyCube } from '../../services/merra2GridCube';
-import { renderPm25GridLightSmooth, samplePm25AtLatLonNearest } from '../../utils/pm25Colormap';
+import { renderPm25GridNativeCells, samplePm25AtLatLonNearest } from '../../utils/pm25Colormap';
 import './PM25HeatMapLayer.css';
 
 export interface PM25Sample {
@@ -39,8 +39,7 @@ function applyHourToMap(
   overlayRef: MutableRefObject<L.ImageOverlay | null>
 ) {
   const grid = hourGridFromCube(cube, hour);
-  // Light bilinear upsample — softens blocky cells without WashU-level blur.
-  const dataUrl = renderPm25GridLightSmooth(grid);
+  const dataUrl = renderPm25GridNativeCells(grid);
   if (!dataUrl) return null;
 
   const { south, west, north, east } = grid.bounds;
@@ -54,7 +53,7 @@ function applyHourToMap(
   const overlay = L.imageOverlay(dataUrl, bounds, {
     opacity,
     pane: 'overlayPane',
-    className: 'pm25-image-overlay pm25-image-overlay--light-smooth',
+    className: 'pm25-image-overlay pm25-image-overlay--native',
     interactive: false,
   });
   overlay.addTo(map);

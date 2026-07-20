@@ -1,8 +1,19 @@
-// Fetches MERRA2 CNN PM2.5 grid from NASA GES DISC OPeNDAP.
-// Falls back to a synthetic sample grid when credentials are missing or the API is unreachable.
+// Fetches MERRA2 CNN PM2.5 grid from NASA GES DISC (NetCDF download + Python extract).
+// OPeNDAP ASCII subsets for the full Africa extent return HTTP 400; NetCDF is reliable.
+// Falls back to a synthetic sample grid when credentials are missing or download fails.
 // Set EARTHDATA_USERNAME + EARTHDATA_PASSWORD (or EARTHDATA_TOKEN) in .env for real data.
 
+import { execFile } from 'node:child_process';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { getEarthdataBearerToken } from './earthdataAuth.js';
+
+const execFileAsync = promisify(execFile);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const gridWorkerScript = path.join(__dirname, 'merra2GridWorker.py');
 
 /** Dashboard focus — smaller OPeNDAP subset loads ~15× faster than global. */
 export const AFRICA_BOUNDS = { south: -35, west: -25, north: 38, east: 55 };
@@ -12,7 +23,7 @@ const NO_DATA = -9999;
 
 const gridCache = new Map();
 /** Bump when grid response shape/bounds logic changes (clears stale in-memory entries after deploy). */
-const GRID_CACHE_VERSION = 'africa-v1';
+const GRID_CACHE_VERSION = 'africa-v2-netcdf';
 
 function latToRowIndex(lat) {
   const row = Math.round(((90 - lat) / 180) * (GLOBAL_HEIGHT - 1));
@@ -275,76 +286,65 @@ export async function fetchMerra2DailyCube(date) {
     return gridCache.get(cacheKey);
   }
 
-  let bearerToken = await getEarthdataBearerToken();
-  let dataUrl;
   try {
-    const granule = await resolveMerra2Granule(date);
-    dataUrl = granule.opendapUrl;
+    const result = await extractDailyCubeFromNetcdf(date);
+    gridCache.set(cacheKey, result);
+    return result;
   } catch (e) {
-    console.warn('[MERRA2] Granule resolve failed:', e.message);
-    return sampleDailyCube(date, 'granule_resolve_error');
+    console.warn('[MERRA2] NetCDF daily cube extract failed:', e.message);
+    return sampleDailyCube(date, e.fallbackReason ?? 'netcdf_extract_error');
   }
+}
 
-  const { latMin, latMax, lonMin, lonMax } = getAfricaIndices();
-  const nLat = latMax - latMin + 1;
-  const nLon = lonMax - lonMin + 1;
-  const hours = MERRA2_GRID.hoursPerDay;
-  const subset = `MERRA2_CNN_Surface_PM25[0:${hours - 1}][${latMin}:${latMax}][${lonMin}:${lonMax}]`;
-
-  let res;
-  try {
-    res = await fetchOpendapAscii(dataUrl, subset, bearerToken);
-    if (res.status === 401 && bearerToken) {
-      bearerToken = await getEarthdataBearerToken({ forceRefresh: true });
-      if (bearerToken) res = await fetchOpendapAscii(dataUrl, subset, bearerToken);
+async function runGridWorker(args) {
+  const runners = [process.env.PYTHON, 'python3', 'python'].filter(Boolean);
+  let lastErr;
+  for (const bin of runners) {
+    try {
+      const { stdout } = await execFileAsync(bin, [gridWorkerScript, ...args], {
+        env: process.env,
+        maxBuffer: 30 * 1024 * 1024,
+      });
+      return JSON.parse(stdout);
+    } catch (err) {
+      lastErr = err;
+      if (err?.code === 'ENOENT') continue;
+      const stderr = err?.stderr?.toString?.().trim();
+      const msg = stderr || err?.message || 'MERRA2 grid worker failed';
+      const workerErr = new Error(msg);
+      workerErr.fallbackReason = 'netcdf_parse_error';
+      throw workerErr;
     }
+  }
+  const err = new Error(lastErr?.message || 'Python not found for MERRA2 grid worker');
+  err.fallbackReason = 'python_not_found';
+  throw err;
+}
+
+async function extractDailyCubeFromNetcdf(date) {
+  let buffer;
+  try {
+    ({ buffer } = await fetchMerra2NetcdfBuffer(date));
   } catch (e) {
-    console.warn('[MERRA2] OPeNDAP daily cube fetch failed:', e.message);
-    return sampleDailyCube(date, 'opendap_network_error');
+    const err = new Error(e.message || 'NetCDF download failed');
+    err.fallbackReason =
+      e.status === 401 ? 'earthdata_401_unauthorized' : 'netcdf_download_error';
+    throw err;
   }
 
-  if (!res.ok) {
-    console.warn('[MERRA2] OPeNDAP daily cube returned', res.status, res.statusText);
-    return sampleDailyCube(date, res.status === 401 ? 'opendap_401_unauthorized' : `opendap_http_${res.status}`);
+  const tmpPath = path.join(tmpdir(), `merra2-${date}-${Date.now()}.nc4`);
+  try {
+    await writeFile(tmpPath, buffer);
+    const payload = await runGridWorker(['daily-cube', '--date', date, '--path', tmpPath]);
+    if (payload?.error) {
+      const err = new Error(payload.error);
+      err.fallbackReason = 'netcdf_parse_error';
+      throw err;
+    }
+    return payload;
+  } finally {
+    await unlink(tmpPath).catch(() => {});
   }
-
-  const text = await res.text();
-  const parsed = parseOpendapAsciiAll(text);
-  const expected = nLon * nLat * hours;
-  if (parsed.length < expected) {
-    console.warn('[MERRA2] Could not parse OPeNDAP daily cube (got', parsed.length, 'expected', expected, ')');
-    return sampleDailyCube(date, 'opendap_parse_error');
-  }
-
-  const values = [];
-  const hourMin = [];
-  const hourMax = [];
-  const sliceLen = nLon * nLat;
-
-  for (let h = 0; h < hours; h++) {
-    const slice = parsed.slice(h * sliceLen, (h + 1) * sliceLen);
-    const norm = normalizeHourSlice(slice);
-    values.push(...norm.values);
-    hourMin.push(norm.min);
-    hourMax.push(norm.max);
-  }
-
-  const result = {
-    date,
-    hours,
-    units: 'µg/m³',
-    bounds: africaNativeBounds(),
-    width: nLon,
-    height: nLat,
-    noDataValue: NO_DATA,
-    hourMin,
-    hourMax,
-    values,
-    source: 'gesdisc',
-  };
-
-  gridCache.set(cacheKey, result);
-  return result;
 }
 
 /**

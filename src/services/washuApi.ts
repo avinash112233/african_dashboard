@@ -173,3 +173,160 @@ export function washuPeriodFromDate(dateStr: string): { year: number; month: num
   const [y, m] = dateStr.split('-').map(Number);
   return { year: y || new Date().getFullYear(), month: m || 1 };
 }
+
+export function washuStationTimeseriesBounds(
+  startYear: number,
+  startMonth: number,
+  endYear: number,
+  endMonth: number,
+  granularity: 'monthly' | 'annual' = 'monthly'
+): { start: string; end: string } {
+  if (granularity === 'annual') {
+    return { start: `${startYear}-01-01`, end: `${endYear}-12-31` };
+  }
+  const sm = String(startMonth).padStart(2, '0');
+  const em = String(endMonth).padStart(2, '0');
+  return { start: `${startYear}-${sm}-01`, end: `${endYear}-${em}-01` };
+}
+
+export function defaultWashuStationSeriesRange(mapYear: number, mapMonth: number) {
+  let endYear = mapYear;
+  let endMonth = mapMonth;
+  let startYear = mapYear;
+  let startMonth = mapMonth - 11;
+  while (startMonth <= 0) {
+    startMonth += 12;
+    startYear -= 1;
+  }
+  return { startYear, startMonth, endYear, endMonth };
+}
+
+export interface WashUStationDailyRecord {
+  sitename: string;
+  country: string | null;
+  fullAddress: string | null;
+  latitude: number;
+  longitude: number;
+  pm25: number;
+  date: string;
+  datetime: string;
+  period?: string;
+  periodLabel?: string;
+}
+
+export interface WashUStationTimeseriesPoint {
+  period: string;
+  year: number;
+  month: number;
+  pm25: number;
+  datetime: string;
+  date?: string;
+}
+
+export interface WashUStationTimeseriesResponse {
+  station: {
+    sitename: string;
+    country?: string | null;
+    fullAddress?: string | null;
+    latitude?: number;
+    longitude?: number;
+  };
+  start: string;
+  end: string;
+  granularity: 'monthly' | 'annual';
+  points: WashUStationTimeseriesPoint[];
+}
+
+export interface WashUStationListRecord {
+  sitename: string;
+  country: string | null;
+  fullAddress: string | null;
+  latitude: number;
+  longitude: number;
+}
+
+export interface WashULatestDateResponse {
+  latestDate: string;
+  latestPeriod?: string;
+  latestDatetimeUtc: string;
+  sourceFile?: string;
+  coverage?: string;
+}
+
+const STATION_CACHE_TTL_MS = 30 * 60 * 1000;
+type StationCacheEntry<T> = { ts: number; data: T };
+
+const washuStationsCache = new Map<string, StationCacheEntry<WashUStationDailyRecord[]>>();
+const washuStationTimeseriesCache = new Map<string, StationCacheEntry<WashUStationTimeseriesResponse>>();
+let washuLatestDateCache: StationCacheEntry<WashULatestDateResponse> | null = null;
+
+function getStationCached<T>(map: Map<string, StationCacheEntry<T>>, key: string): T | null {
+  const hit = map.get(key);
+  if (!hit || Date.now() - hit.ts > STATION_CACHE_TTL_MS) return null;
+  return hit.data;
+}
+
+function setStationCached<T>(map: Map<string, StationCacheEntry<T>>, key: string, data: T) {
+  map.set(key, { ts: Date.now(), data });
+}
+
+async function readStationJsonOrThrow<T>(res: Response): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  let message = `Request failed (${res.status})`;
+  try {
+    const payload = (await res.json()) as { error?: string };
+    if (payload?.error) message = payload.error;
+  } catch {
+    /* ignore */
+  }
+  throw new Error(message);
+}
+
+export async function getWashUStationsByDate(date: string): Promise<WashUStationDailyRecord[]> {
+  const cached = getStationCached(washuStationsCache, date);
+  if (cached) return cached;
+
+  const url = buildBaseApiUrl(`/api/washu/stations?date=${encodeURIComponent(date)}`);
+  const res = await fetch(url);
+  const json = await readStationJsonOrThrow<{ date: string; stations: WashUStationDailyRecord[] }>(res);
+  const stations = Array.isArray(json.stations) ? json.stations : [];
+  setStationCached(washuStationsCache, date, stations);
+  return stations;
+}
+
+export async function getWashUStationTimeseries(
+  sitename: string,
+  start: string,
+  end: string,
+  granularity: 'monthly' | 'annual' = 'monthly'
+): Promise<WashUStationTimeseriesResponse> {
+  const cacheKey = `${sitename}:${granularity}:${start}:${end}`;
+  const cached = getStationCached(washuStationTimeseriesCache, cacheKey);
+  if (cached) return cached;
+
+  const url = buildBaseApiUrl(
+    `/api/washu/station-timeseries?sitename=${encodeURIComponent(sitename)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&granularity=${granularity}`
+  );
+  const res = await fetch(url);
+  const data = await readStationJsonOrThrow<WashUStationTimeseriesResponse>(res);
+  setStationCached(washuStationTimeseriesCache, cacheKey, data);
+  return data;
+}
+
+export async function getWashUStationList(): Promise<WashUStationListRecord[]> {
+  const url = buildBaseApiUrl('/api/washu/station-list');
+  const res = await fetch(url);
+  const json = await readStationJsonOrThrow<{ stations: WashUStationListRecord[] }>(res);
+  return Array.isArray(json.stations) ? json.stations : [];
+}
+
+export async function getWashULatestDate(): Promise<WashULatestDateResponse> {
+  if (washuLatestDateCache && Date.now() - washuLatestDateCache.ts <= STATION_CACHE_TTL_MS) {
+    return washuLatestDateCache.data;
+  }
+  const url = buildBaseApiUrl('/api/washu/latest-date');
+  const res = await fetch(url);
+  const data = await readStationJsonOrThrow<WashULatestDateResponse>(res);
+  washuLatestDateCache = { ts: Date.now(), data };
+  return data;
+}

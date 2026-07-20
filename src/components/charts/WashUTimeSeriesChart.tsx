@@ -24,6 +24,8 @@ interface WashUTimeSeriesChartProps {
   endYear: number;
   endMonth: number;
   title?: string;
+  granularity?: 'monthly' | 'annual';
+  emptyMessage?: string;
 }
 
 function normalizeRange(
@@ -72,6 +74,20 @@ function buildMonthlySeries(
   return { labels, values, tooltips };
 }
 
+function buildAnnualSeries(points: WashUTimeseriesPoint[], startYear: number, endYear: number) {
+  const byPeriod = new Map(points.map((p) => [String(p.year ?? p.period), p.pm25]));
+  const labels: string[] = [];
+  const values: (number | null)[] = [];
+  const tooltips: string[] = [];
+  for (let y = startYear; y <= endYear; y += 1) {
+    const key = String(y);
+    labels.push(key);
+    tooltips.push(key);
+    values.push(byPeriod.get(key) ?? null);
+  }
+  return { labels, values, tooltips };
+}
+
 const WashUTimeSeriesChart = ({
   points,
   startYear,
@@ -79,15 +95,20 @@ const WashUTimeSeriesChart = ({
   endYear,
   endMonth,
   title = 'WashU monthly PM2.5',
+  granularity = 'monthly',
+  emptyMessage,
 }: WashUTimeSeriesChartProps) => {
   const range = normalizeRange(startYear, startMonth, endYear, endMonth);
-  const { labels, values, tooltips } = buildMonthlySeries(
-    points,
-    range.startYear,
-    range.startMonth,
-    range.endYear,
-    range.endMonth
-  );
+  const { labels, values, tooltips } =
+    granularity === 'annual'
+      ? buildAnnualSeries(points, range.startYear, range.endYear)
+      : buildMonthlySeries(
+          points,
+          range.startYear,
+          range.startMonth,
+          range.endYear,
+          range.endMonth
+        );
 
   const hasAnyData = values.some((v) => v != null && Number.isFinite(v));
   const monthCount = labels.length;
@@ -108,8 +129,10 @@ const WashUTimeSeriesChart = ({
           padding: '0 16px',
         }}
       >
-        No WashU PM2.5 data in this range. Adjust the range and click Apply — first load downloads monthly
-        NetCDF files from AWS.
+        No WashU PM2.5 data in this range.
+        {emptyMessage ?? (granularity === 'annual'
+          ? ' Adjust the year range and click Apply.'
+          : ' Adjust the range and click Apply — first load downloads monthly NetCDF files from AWS.')}
       </div>
     );
   }
@@ -157,7 +180,7 @@ const WashUTimeSeriesChart = ({
         },
         scales: {
           x: {
-            title: { display: true, text: 'Month', font: { size: 12, weight: 'bold' } },
+            title: { display: true, text: granularity === 'annual' ? 'Year' : 'Month', font: { size: 12, weight: 'bold' } },
             ticks: {
               autoSkip: !showEveryMonth,
               maxRotation: 45,

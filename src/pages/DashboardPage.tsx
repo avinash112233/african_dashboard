@@ -25,7 +25,7 @@ const OpenAqTimeSeriesChart = lazy(() => import('../components/charts/OpenAqTime
 const AAQEThreeDayForecastChart = lazy(() => import('../components/charts/AAQEThreeDayForecastChart'));
 const WashUTimeSeriesChart = lazy(() => import('../components/charts/WashUTimeSeriesChart'));
 const AnalysisPanel = lazy(() => import('../components/analysis/AnalysisPanel'));
-import { fetchWashUTimeseries, loadWashUGrid, washuPeriodFromDate, type WashUTimeseriesPoint } from '../services/washuApi';
+import { fetchWashUTimeseries, getWashUStationsByDate, getWashUStationTimeseries, getWashULatestDate, loadWashUGrid, washuPeriodFromDate, washuStationTimeseriesBounds, defaultWashuStationSeriesRange, type WashUTimeseriesPoint, type WashUStationDailyRecord, type WashUStationTimeseriesPoint } from '../services/washuApi';
 import { loadMerra2DailyCube } from '../services/merra2GridCube';
 import { formatDateMonthDayYear, formatDisplayDate, normalizeAeronetDate } from '../utils/dateFormat';
 import {
@@ -372,6 +372,63 @@ function Merra2SelectedPanel({ station, aqi, dataDate, metricsLoading }: Merra2S
   );
 }
 
+interface WashuStationSelectedPanelProps {
+  station: WashUStationDailyRecord;
+  aqi: number | null;
+  dataDate: string;
+  metricsLoading?: boolean;
+}
+
+function WashuStationSelectedPanel({ station, aqi, dataDate, metricsLoading }: WashuStationSelectedPanelProps) {
+  const aqiCat = getAqiCategory(aqi);
+  const aqiBgColor = aqiCat.color;
+  const aqiTxtColor = getAqiTextColor(aqi);
+
+  return (
+    <div className="merra2-panel washu-panel">
+      <div className="merra2-panel-header">
+        <p className="merra2-panel-site">{station.sitename}</p>
+        <p className="merra2-panel-meta">WashU ACAG SatPM2.5 Station</p>
+        {station.country && <p className="merra2-panel-meta">{station.country}</p>}
+        <p className="merra2-panel-meta">
+          {station.latitude.toFixed(4)}°, {station.longitude.toFixed(4)}°
+        </p>
+        <p className="merra2-panel-meta">
+          Data period: {station.periodLabel ?? station.period ?? formatDateMonthDayYear(dataDate)} (monthly mean)
+        </p>
+      </div>
+
+      <div className="aaqe-metrics-row">
+        <div className="aaqe-metric-card" style={{ borderTop: `3px solid ${metricsLoading ? '#d1d5db' : aqiBgColor}` }}>
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? '…' : (aqi ?? '—')}
+          </div>
+          <div className="aaqe-metric-label">AQI</div>
+          <div className="aaqe-metric-cat" style={{ color: metricsLoading ? '#9ca3af' : aqiTxtColor }}>
+            {metricsLoading ? 'Updating…' : aqiCat.label}
+          </div>
+        </div>
+        <div className="aaqe-metric-card">
+          <div className="aaqe-metric-value" style={{ color: metricsLoading ? '#9ca3af' : '#1f2937' }}>
+            {metricsLoading ? '…' : station.pm25.toFixed(1)}
+          </div>
+          <div className="aaqe-metric-label">PM2.5 (µg/m³)</div>
+          <div className="aaqe-metric-cat" style={{ color: '#6b7280' }}>monthly mean</div>
+        </div>
+      </div>
+
+      {station.fullAddress && (
+        <div className="merra2-panel-address">
+          <span className="aaqe-section-label" style={{ display: 'inline', marginBottom: 0 }}>Location: </span>
+          {station.fullAddress}
+        </div>
+      )}
+
+      <p className="data-source-footer">Source: WashU ACAG station parquet archive</p>
+    </div>
+  );
+}
+
 interface OpenAqSelectedPanelProps {
   station: OpenAqStationRecord;
   aqi: number | null;
@@ -509,7 +566,7 @@ const DashboardPage = () => {
   type LayerMode = DashboardV1Layer;
   const [workflow, setWorkflow] = useState<DashboardV1Workflow>('historical');
   const [activeLayers, setActiveLayers] = useState<LayerMode[]>(['aeronet']);
-  const [primaryLayer, setPrimaryLayer] = useState<LayerMode>('aeronet');
+  const [, setPrimaryLayer] = useState<LayerMode>('aeronet');
   const layerOn = useCallback((layer: LayerMode) => activeLayers.includes(layer), [activeLayers]);
   const showAeronet = layerOn('aeronet');
   const showFires = layerOn('fires');
@@ -561,7 +618,30 @@ const DashboardPage = () => {
   const [merra2GridSource, setMerra2GridSource] = useState<'gesdisc' | 'sample' | null>(null);
   const [merra2GridFallbackReason, setMerra2GridFallbackReason] = useState<string | null>(null);
   const [washuPeriod, setWashuPeriod] = useState<'monthly' | 'annual'>('monthly');
+  const [washuShowStations, setWashuShowStations] = useState(true);
+  const [washuShowGridOverlay, setWashuShowGridOverlay] = useState(true);
   const [washuGridLoading, setWashuGridLoading] = useState(false);
+  const [washuStationsLoading, setWashuStationsLoading] = useState(false);
+  const [washuStationsError, setWashuStationsError] = useState<string | null>(null);
+  const [washuStationsNotice, setWashuStationsNotice] = useState<string | null>(null);
+  const [washuDataDate, setWashuDataDate] = useState<string | null>(null);
+  const [washuLatestDate, setWashuLatestDate] = useState<string | null>(null);
+  const [washuStations, setWashuStations] = useState<WashUStationDailyRecord[]>([]);
+  const [selectedWashuStation, setSelectedWashuStation] = useState<WashUStationDailyRecord | null>(null);
+  const [washuStationSeries, setWashuStationSeries] = useState<WashUStationTimeseriesPoint[]>([]);
+  const [washuStationSeriesLoading, setWashuStationSeriesLoading] = useState(false);
+  const [washuStationSeriesGranularity, setWashuStationSeriesGranularity] = useState<'monthly' | 'annual'>('monthly');
+  const [washuStationSeriesStartYear, setWashuStationSeriesStartYear] = useState(2018);
+  const [washuStationSeriesStartMonth, setWashuStationSeriesStartMonth] = useState(1);
+  const [washuStationSeriesEndYear, setWashuStationSeriesEndYear] = useState(2023);
+  const [washuStationSeriesEndMonth, setWashuStationSeriesEndMonth] = useState(12);
+  const [washuStationAppliedSeriesRange, setWashuStationAppliedSeriesRange] = useState({
+    startYear: 2018,
+    startMonth: 1,
+    endYear: 2023,
+    endMonth: 12,
+    granularity: 'monthly' as 'monthly' | 'annual',
+  });
   const [washuGridSource, setWashuGridSource] = useState<'satpm' | 'sample' | null>(null);
   const [washuGridFallbackReason, setWashuGridFallbackReason] = useState<string | null>(null);
   const [washuPin, setWashuPin] = useState<{ lat: number; lon: number; pm25: number | null } | null>(null);
@@ -646,6 +726,7 @@ const DashboardPage = () => {
     return effectiveSelectedDate.isAfter(maxSupported, 'day') ? maxSupported : effectiveSelectedDate;
   }, [effectiveSelectedDate]);
   const washuPeriodParts = useMemo(() => washuPeriodFromDate(washuMapDate.format('YYYY-MM-DD')), [washuMapDate]);
+  const washuRequestedDate = washuMapDate.format('YYYY-MM-DD');
   const washuPeriodLabel =
     washuPeriod === 'annual'
       ? String(washuPeriodParts.year)
@@ -901,6 +982,22 @@ const DashboardPage = () => {
     setSelectedFire(null);
     setSelectedAAQE(null);
     setSelectedOpenAqStation(null);
+    setSelectedWashuStation(null);
+    setWashuPin(null);
+    setAnalysisAnchor(anchorFromMerra2(station));
+    setChartData([]);
+    setLeftPanelOpen(false);
+    setRightPanelOpen(true);
+  }, []);
+
+  const handleWashuStationClick = useCallback((station: WashUStationDailyRecord) => {
+    setSelectedWashuStation(station);
+    setSelectedSite(null);
+    setSelectedFire(null);
+    setSelectedAAQE(null);
+    setSelectedOpenAqStation(null);
+    setSelectedMerra2Station(null);
+    setWashuPin(null);
     setAnalysisAnchor(anchorFromMerra2(station));
     setChartData([]);
     setLeftPanelOpen(false);
@@ -1088,6 +1185,80 @@ const DashboardPage = () => {
     };
   }, [merra2RequestedDate, preloadHistoricalLayers]);
 
+  useEffect(() => {
+    if (!preloadHistoricalLayers) return;
+
+    let cancelled = false;
+    const loadWashuStationData = async () => {
+      setWashuStationsLoading(true);
+      setWashuStationsError(null);
+      setWashuStationsNotice(null);
+      setWashuDataDate(null);
+      const requestedDate = washuRequestedDate;
+
+      try {
+        const stations = await getWashUStationsByDate(requestedDate);
+        if (cancelled) return;
+        setWashuDataDate(requestedDate);
+        setWashuStations(stations);
+        setWashuStationsLoading(false);
+        setSelectedWashuStation((prev) =>
+          prev ? stations.find((s) => s.sitename === prev.sitename) ?? null : null
+        );
+        return;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        const noDataForDate = /No WashU station data found for date/i.test(message);
+        if (!noDataForDate) {
+          if (cancelled) return;
+          setWashuDataDate(null);
+          setWashuStations([]);
+          setSelectedWashuStation(null);
+          setWashuStationSeries([]);
+          setWashuStationsError(message || 'Failed to load WashU stations.');
+          return;
+        }
+      }
+
+      try {
+        let latestDate = washuLatestDate;
+        if (!latestDate) {
+          const latest = await getWashULatestDate();
+          latestDate = latest.latestDate;
+          if (latestDate) setWashuLatestDate(latestDate);
+        }
+        if (!latestDate) {
+          throw new Error('WashU latest parquet date is unavailable.');
+        }
+        const latestStations = await getWashUStationsByDate(latestDate);
+        if (cancelled) return;
+        setWashuDataDate(latestDate);
+        setWashuStations(latestStations);
+        setWashuStationsLoading(false);
+        setSelectedWashuStation((prev) =>
+          prev ? latestStations.find((s) => s.sitename === prev.sitename) ?? null : null
+        );
+        if (latestDate !== requestedDate) {
+          setWashuStationsNotice(`No WashU station data for ${requestedDate}. Showing latest available date: ${latestDate}.`);
+        }
+      } catch (err: unknown) {
+        if (cancelled) return;
+        setWashuDataDate(null);
+        setWashuStations([]);
+        setSelectedWashuStation(null);
+        setWashuStationSeries([]);
+        setWashuStationsError(err instanceof Error ? err.message : 'Failed to load WashU stations.');
+      } finally {
+        if (!cancelled) setWashuStationsLoading(false);
+      }
+    };
+
+    loadWashuStationData();
+    return () => {
+      cancelled = true;
+    };
+  }, [washuRequestedDate, preloadHistoricalLayers, washuLatestDate]);
+
   // Warm MERRA2 + WashU grid cubes in IndexedDB before the user switches layers.
   useEffect(() => {
     if (!preloadHistoricalLayers) return;
@@ -1251,6 +1422,54 @@ const DashboardPage = () => {
       })
       .finally(() => setMerra2SeriesLoading(false));
   }, [showMERRA2PM25, selectedMerra2Station?.sitename, merra2AnalysisStartDate, merra2AnalysisEndDate]);
+
+  useEffect(() => {
+    const { year, month } = washuPeriodParts;
+    const defaults = defaultWashuStationSeriesRange(year, month);
+    setWashuStationSeriesStartYear(defaults.startYear);
+    setWashuStationSeriesStartMonth(defaults.startMonth);
+    setWashuStationSeriesEndYear(defaults.endYear);
+    setWashuStationSeriesEndMonth(defaults.endMonth);
+    setWashuStationAppliedSeriesRange({
+      ...defaults,
+      granularity: washuStationSeriesGranularity,
+    });
+  }, [washuRequestedDate, selectedWashuStation?.sitename, washuPeriodParts.year, washuPeriodParts.month]);
+
+  useEffect(() => {
+    if (!showWashU || !selectedWashuStation) return;
+    setWashuStationSeriesLoading(true);
+    setWashuStationsError(null);
+    const bounds = washuStationTimeseriesBounds(
+      washuStationAppliedSeriesRange.startYear,
+      washuStationAppliedSeriesRange.startMonth,
+      washuStationAppliedSeriesRange.endYear,
+      washuStationAppliedSeriesRange.endMonth,
+      washuStationAppliedSeriesRange.granularity
+    );
+    getWashUStationTimeseries(
+      selectedWashuStation.sitename,
+      bounds.start,
+      bounds.end,
+      washuStationAppliedSeriesRange.granularity
+    )
+      .then((res) => {
+        setWashuStationSeries(Array.isArray(res.points) ? res.points : []);
+      })
+      .catch((err) => {
+        setWashuStationSeries([]);
+        setWashuStationsError(err?.message || 'Failed to load WashU station time series.');
+      })
+      .finally(() => setWashuStationSeriesLoading(false));
+  }, [
+    showWashU,
+    selectedWashuStation?.sitename,
+    washuStationAppliedSeriesRange.startYear,
+    washuStationAppliedSeriesRange.startMonth,
+    washuStationAppliedSeriesRange.endYear,
+    washuStationAppliedSeriesRange.endMonth,
+    washuStationAppliedSeriesRange.granularity,
+  ]);
 
   const pointsInCircle = useMemo(() => {
     if (!showFires || !circleCenter) return [];
@@ -1450,6 +1669,7 @@ const DashboardPage = () => {
         if (layer === 'merra2') setSelectedMerra2Station(null);
         if (layer === 'aaqe') setSelectedAAQE(null);
         if (layer === 'washu') setWashuPin(null);
+        if (layer === 'washu') setSelectedWashuStation(null);
         if (layer === 'aeronet') setSelectedSite(null);
         setPrimaryLayer((p) => (p === layer ? prev.find((l) => l !== layer) ?? p : p));
         return prev.filter((l) => l !== layer);
@@ -1534,6 +1754,35 @@ const DashboardPage = () => {
     });
   }, [merra2RequestedDate]);
 
+  const applyWashuStationRange = useCallback(() => {
+    setWashuStationAppliedSeriesRange({
+      startYear: washuStationSeriesStartYear,
+      startMonth: washuStationSeriesStartMonth,
+      endYear: washuStationSeriesEndYear,
+      endMonth: washuStationSeriesEndMonth,
+      granularity: washuStationSeriesGranularity,
+    });
+  }, [
+    washuStationSeriesStartYear,
+    washuStationSeriesStartMonth,
+    washuStationSeriesEndYear,
+    washuStationSeriesEndMonth,
+    washuStationSeriesGranularity,
+  ]);
+
+  const resetWashuStationRange = useCallback(() => {
+    const { year, month } = washuPeriodParts;
+    const defaults = defaultWashuStationSeriesRange(year, month);
+    setWashuStationSeriesStartYear(defaults.startYear);
+    setWashuStationSeriesStartMonth(defaults.startMonth);
+    setWashuStationSeriesEndYear(defaults.endYear);
+    setWashuStationSeriesEndMonth(defaults.endMonth);
+    setWashuStationAppliedSeriesRange({
+      ...defaults,
+      granularity: washuStationSeriesGranularity,
+    });
+  }, [washuPeriodParts, washuStationSeriesGranularity]);
+
   const applyOpenAqRange = useCallback(() => {
     const from = openAqDateFrom;
     const to = openAqDateTo;
@@ -1562,6 +1811,7 @@ const DashboardPage = () => {
 
   const handleWashuMapClick = useCallback((lat: number, lon: number) => {
     setWashuPin({ lat, lon, pm25: null });
+    setSelectedWashuStation(null);
     setSelectedSite(null);
     setSelectedFire(null);
     setSelectedMerra2Station(null);
@@ -1627,10 +1877,21 @@ const DashboardPage = () => {
     );
   }, [selectedMerra2Station, merra2DataDate, merra2Stations]);
   const merra2PanelMetricsLoading = Boolean(selectedMerra2Station) && merra2Loading;
+  const washuPanelDataDate = washuDataDate ?? washuRequestedDate;
+  const washuPanelStation = useMemo(() => {
+    if (!selectedWashuStation) return null;
+    if (!washuDataDate) return selectedWashuStation;
+    return (
+      washuStations.find((s) => s.sitename === selectedWashuStation.sitename) ??
+      selectedWashuStation
+    );
+  }, [selectedWashuStation, washuDataDate, washuStations]);
+  const washuPanelMetricsLoading = Boolean(selectedWashuStation) && washuStationsLoading;
 
   const activeSelectedSite = selectedSite;
   const activeSelectedFire = selectedFire;
   const activeSelectedMerra2Station = merra2PanelStation;
+  const activeSelectedWashuStation = washuPanelStation;
   const activeSelectedOpenAq = selectedOpenAqStation;
   const activeSelectedAAQE = selectedAAQE;
   const aaqeForecastDateOptions = useMemo(() => {
@@ -1686,6 +1947,9 @@ const DashboardPage = () => {
   const selectedMerra2Aqi = activeSelectedMerra2Station
     ? calculateAQIFromPm25(activeSelectedMerra2Station.pm25)
     : null;
+  const selectedWashuStationAqi = activeSelectedWashuStation
+    ? calculateAQIFromPm25(activeSelectedWashuStation.pm25)
+    : null;
   const selectedOpenAqDayPoint = useMemo(() => {
     if (!activeSelectedOpenAq) return null;
     if (openAqMapMode === 'daily') {
@@ -1731,6 +1995,7 @@ const DashboardPage = () => {
     activeSelectedSite ||
       activeSelectedFire ||
       activeSelectedMerra2Station ||
+      activeSelectedWashuStation ||
       activeSelectedAAQE ||
       activeSelectedOpenAq ||
       washuPin
@@ -1922,15 +2187,43 @@ const DashboardPage = () => {
                   )}
                   {merra2ShowGridOverlay && merra2GridSource === 'sample' && (
                     <small className="layer-tip layer-tip-warn">
-                      ⚠ Grid showing sample data — check Earthdata credentials and restart backend
+                      ⚠ Grid showing sample data
+                      {merra2GridFallbackReason?.includes('opendap') || merra2GridFallbackReason?.includes('netcdf')
+                        ? ' — no NASA granule for this date, or Earthdata download failed'
+                        : ' — check Earthdata credentials and restart backend'}
                       {merra2GridFallbackReason ? ` (${merra2GridFallbackReason})` : ''}.
+                      {effectiveSelectedDate.isAfter(dayjs(merra2LatestDate ?? '2025-12-31', 'YYYY-MM-DD'), 'day') &&
+                        merra2LatestDate &&
+                        ` Try ${merra2LatestDate} or earlier.`}
                     </small>
                   )}
                 </>
               )}
-              {renderLayerToggle('washu', washuGridLoading)}
+              {renderLayerToggle('washu', washuGridLoading || washuStationsLoading)}
               {showWashU && (
                 <>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={washuShowStations}
+                      onChange={(e) => setWashuShowStations(e.target.checked)}
+                    />
+                    Station markers (parquet · monthly means)
+                  </label>
+                  <label className="layer-checkbox fire-subcontrol">
+                    <input
+                      type="checkbox"
+                      checked={washuShowGridOverlay}
+                      onChange={(e) => {
+                        setWashuShowGridOverlay(e.target.checked);
+                        if (!e.target.checked) {
+                          setWashuGridSource(null);
+                          setWashuGridFallbackReason(null);
+                        }
+                      }}
+                    />
+                    SatPM2.5 grid overlay
+                  </label>
                   <div className="aeronet-subcontrol" style={{ marginTop: 8 }}>
                     <label style={{ fontSize: 12, color: '#666', fontWeight: 600, display: 'block' }}>
                       Temporal product
@@ -1947,8 +2240,12 @@ const DashboardPage = () => {
                   </div>
                   <small className="layer-tip">
                     Select date sets {washuPeriod === 'monthly' ? 'year + month' : 'year'} (1998–2023). Showing{' '}
-                    <strong>{washuPeriodLabel}</strong>. Click the map to pin a location for time series.
+                    <strong>{washuPeriodLabel}</strong>.
+                    {washuShowStations ? ' Click a station for monthly/annual PM2.5 trends.' : ''}
+                    {washuShowGridOverlay ? ' Click the map to pin a grid location for monthly series.' : ''}
                   </small>
+                  {washuStationsError && <small className="layer-tip layer-tip-warn">⚠ {washuStationsError}</small>}
+                  {washuStationsNotice && <small className="layer-tip">{washuStationsNotice}</small>}
                   {washuGridSource === 'sample' && (
                     <small className="layer-tip layer-tip-warn">
                       ⚠ Grid showing sample data — SatPM download or Python worker failed
@@ -2185,7 +2482,13 @@ const DashboardPage = () => {
                 <p className="map-loading-text map-loading-text--small">Loading MERRA2 stations…</p>
               </div>
             )}
-            {showWashU && washuGridLoading && (
+            {showWashU && washuShowStations && washuStationsLoading && washuStations.length === 0 && (
+              <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
+                <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
+                <p className="map-loading-text map-loading-text--small">Loading WashU stations…</p>
+              </div>
+            )}
+            {showWashU && washuShowGridOverlay && washuGridLoading && (
               <div className="map-loading-overlay map-loading-overlay--bottom-right" aria-live="polite">
                 <div className="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" />
                 <p className="map-loading-text map-loading-text--small">Loading WashU SatPM2.5 grid…</p>
@@ -2217,6 +2520,10 @@ const DashboardPage = () => {
                 }}
                 merra2GridSource={merra2GridSource}
                 showWashU={showWashU}
+                showWashuGridOverlay={washuShowGridOverlay}
+                showWashuStations={washuShowStations}
+                washuStations={washuStations}
+                onWashuStationClick={handleWashuStationClick}
                 washuPeriod={washuPeriod}
                 washuYear={washuPeriodParts.year}
                 washuMonth={washuPeriod === 'monthly' ? washuPeriodParts.month : null}
@@ -2504,6 +2811,131 @@ const DashboardPage = () => {
                             points={merra2Series}
                             startDate={dayjs(merra2AnalysisStartDate)}
                             endDate={dayjs(merra2AnalysisEndDate)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Suspense>
+                )}
+              </div>
+            )}
+            {showWashU && selectedWashuStation && (
+              <div className="charts-section" style={{ paddingTop: 14 }}>
+                <div
+                  className="charts-section-header"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginBottom: 8,
+                  }}
+                >
+                  <h6 style={{ margin: 0 }}>WashU SatPM2.5 station analysis</h6>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <select
+                      className="site-select"
+                      style={{ minWidth: 110 }}
+                      value={washuStationSeriesGranularity}
+                      onChange={(e) => setWashuStationSeriesGranularity(e.target.value as 'monthly' | 'annual')}
+                    >
+                      <option value="monthly">Monthly</option>
+                      <option value="annual">Annual</option>
+                    </select>
+                    <label style={{ fontSize: 12, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      From
+                      <input
+                        type="number"
+                        min={1998}
+                        max={2023}
+                        value={washuStationSeriesStartYear}
+                        onChange={(e) => setWashuStationSeriesStartYear(Number(e.target.value))}
+                        style={{ width: 72, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                      {washuStationSeriesGranularity === 'monthly' && (
+                        <>
+                          /
+                          <input
+                            type="number"
+                            min={1}
+                            max={12}
+                            value={washuStationSeriesStartMonth}
+                            onChange={(e) => setWashuStationSeriesStartMonth(Number(e.target.value))}
+                            style={{ width: 52, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                          />
+                        </>
+                      )}
+                    </label>
+                    <label style={{ fontSize: 12, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      To
+                      <input
+                        type="number"
+                        min={1998}
+                        max={2023}
+                        value={washuStationSeriesEndYear}
+                        onChange={(e) => setWashuStationSeriesEndYear(Number(e.target.value))}
+                        style={{ width: 72, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                      />
+                      {washuStationSeriesGranularity === 'monthly' && (
+                        <>
+                          /
+                          <input
+                            type="number"
+                            min={1}
+                            max={12}
+                            value={washuStationSeriesEndMonth}
+                            onChange={(e) => setWashuStationSeriesEndMonth(Number(e.target.value))}
+                            style={{ width: 52, padding: '5px 8px', borderRadius: 4, border: '1px solid #ddd' }}
+                          />
+                        </>
+                      )}
+                    </label>
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      style={{ marginTop: 0, height: 40, padding: '0 14px' }}
+                      onClick={applyWashuStationRange}
+                    >
+                      Apply
+                    </button>
+                    <button
+                      type="button"
+                      className="export-csv-btn"
+                      style={{ marginTop: 0, height: 40, padding: '0 14px' }}
+                      onClick={resetWashuStationRange}
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+                <small className="layer-tip" style={{ marginTop: 2, display: 'block', textAlign: 'left' }}>
+                  Station: {selectedWashuStation.sitename} · {washuStationAppliedSeriesRange.granularity === 'annual'
+                    ? `${washuStationAppliedSeriesRange.startYear}–${washuStationAppliedSeriesRange.endYear} (annual means)`
+                    : `${washuStationAppliedSeriesRange.startYear}-${String(washuStationAppliedSeriesRange.startMonth).padStart(2, '0')} to ${washuStationAppliedSeriesRange.endYear}-${String(washuStationAppliedSeriesRange.endMonth).padStart(2, '0')} (monthly means)`}
+                </small>
+                {washuStationSeriesLoading ? (
+                  <div className="chart-loading-box">
+                    <div className="chart-loading-spinner" />
+                    <p className="chart-loading">Loading WashU PM2.5 series for {selectedWashuStation.sitename}…</p>
+                  </div>
+                ) : (
+                  <Suspense fallback={<ChartLoadingFallback />}>
+                    <div className="charts-row">
+                      <div className="chart-box" style={{ minWidth: 380 }}>
+                        <div className="chart-container">
+                          <WashUTimeSeriesChart
+                            points={washuStationSeries}
+                            startYear={washuStationAppliedSeriesRange.startYear}
+                            startMonth={washuStationAppliedSeriesRange.startMonth}
+                            endYear={washuStationAppliedSeriesRange.endYear}
+                            endMonth={washuStationAppliedSeriesRange.endMonth}
+                            granularity={washuStationAppliedSeriesRange.granularity}
+                            title={
+                              washuStationAppliedSeriesRange.granularity === 'annual'
+                                ? `WashU SatPM2.5 Annual Mean · ${selectedWashuStation.sitename}`
+                                : `WashU SatPM2.5 Monthly Mean · ${selectedWashuStation.sitename}`
+                            }
+                            emptyMessage=" Adjust the range and click Apply."
                           />
                         </div>
                       </div>
@@ -2834,6 +3266,13 @@ const DashboardPage = () => {
                     aqi={selectedMerra2Aqi}
                     dataDate={merra2PanelDataDate}
                     metricsLoading={merra2PanelMetricsLoading}
+                  />
+                ) : activeSelectedWashuStation ? (
+                  <WashuStationSelectedPanel
+                    station={activeSelectedWashuStation}
+                    aqi={selectedWashuStationAqi}
+                    dataDate={washuPanelDataDate}
+                    metricsLoading={washuPanelMetricsLoading}
                   />
                 ) : washuPin ? (
                   <WashUSelectedPanel

@@ -21,9 +21,10 @@ interface MERRA2StationTimeSeriesChartProps {
   points: MERRA2StationTimeseriesPoint[];
   startDate: dayjs.Dayjs;
   endDate: dayjs.Dayjs;
+  title?: string;
 }
 
-const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2StationTimeSeriesChartProps) => {
+const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate, title = 'MERRA2 CNN PM2.5 Daily Mean Time Series' }: MERRA2StationTimeSeriesChartProps) => {
   const daily = new Map<string, { sum: number; count: number }>();
   for (const p of points) {
     const d = dayjs(p.date ?? p.datetime);
@@ -80,7 +81,7 @@ const MERRA2StationTimeSeriesChart = ({ points, startDate, endDate }: MERRA2Stat
         plugins: {
           ...chartPluginsBase,
           legend: { position: 'top' as const },
-          title: { display: true, text: 'MERRA2 CNN PM2.5 Daily Mean Time Series' },
+          title: { display: true, text: title },
           tooltip: {
             callbacks: {
               label: (ctx: { parsed?: { y: number | null } }) => {

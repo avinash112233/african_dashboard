@@ -19,6 +19,13 @@ import {
 } from './merra2Stations.js';
 import { fetchWashUGrid, fetchWashUTimeseries, getWashUConfig } from './washu.js';
 import {
+  getWashULatestStationDate,
+  getWashUStationList,
+  getWashUStationsForDate,
+  getWashUStationTimeseries,
+  toWashUStationHttpError,
+} from './washuStations.js';
+import {
   getOpenAqArchiveInfo,
   getOpenAqAuthStatus,
   getOpenAqLocationCatalog,
@@ -284,6 +291,69 @@ app.get('/api/washu/pm25/timeseries', async (req, res) => {
   } catch (err) {
     const e = toHttpError(err);
     console.error('[WashU timeseries] Error:', e.message);
+    res.status(e.status).json({ error: e.message });
+  }
+});
+
+app.get('/api/washu/stations', async (req, res) => {
+  try {
+    const dateParam = parseIsoDateParam(req.query.date, 'date');
+    const stations = await getWashUStationsForDate(dateParam);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({ date: dateParam, stations, count: stations.length });
+  } catch (err) {
+    const e = toWashUStationHttpError(err);
+    console.error('[WashU stations] Error:', e.message);
+    res.status(e.status).json({ error: e.message });
+  }
+});
+
+app.get('/api/washu/station-timeseries', async (req, res) => {
+  try {
+    const sitename = String(req.query.sitename || '').trim();
+    if (!sitename) {
+      return res.status(400).json({ error: 'Missing required query param: sitename' });
+    }
+    const start = parseIsoDateParam(req.query.start, 'start');
+    const end = parseIsoDateParam(req.query.end, 'end');
+    const granularity = String(req.query.granularity || 'monthly').toLowerCase();
+    if (granularity !== 'monthly' && granularity !== 'annual') {
+      return res.status(400).json({ error: 'Invalid granularity. Expected monthly or annual.' });
+    }
+    const series = await getWashUStationTimeseries({ sitename, start, end, granularity });
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(series);
+  } catch (err) {
+    const e = toWashUStationHttpError(err);
+    console.error('[WashU station-timeseries] Error:', e.message);
+    res.status(e.status).json({ error: e.message });
+  }
+});
+
+app.get('/api/washu/station-list', async (_req, res) => {
+  try {
+    const stations = await getWashUStationList();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({ stations });
+  } catch (err) {
+    const e = toWashUStationHttpError(err);
+    console.error('[WashU station-list] Error:', e.message);
+    res.status(e.status).json({ error: e.message });
+  }
+});
+
+app.get('/api/washu/latest-date', async (_req, res) => {
+  try {
+    const latest = await getWashULatestStationDate();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(latest);
+  } catch (err) {
+    const e = toWashUStationHttpError(err);
+    console.error('[WashU latest-date] Error:', e.message);
     res.status(e.status).json({ error: e.message });
   }
 });

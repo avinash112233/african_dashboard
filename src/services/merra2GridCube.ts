@@ -30,8 +30,10 @@ export interface Merra2HourGrid {
 }
 
 const DB_NAME = 'african-dashboard-merra2';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 const STORE = 'daily-cubes';
+/** Bump when backend cube extraction changes — skips stale sample entries from older builds. */
+const CUBE_CACHE_SCHEMA = 'netcdf-v1';
 
 const memoryCache = new Map<string, Merra2DailyCube>();
 const inflight = new Map<string, Promise<Merra2DailyCube>>();
@@ -46,7 +48,8 @@ function openDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
+      db.createObjectStore(STORE);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('IndexedDB open failed'));
@@ -139,7 +142,8 @@ function decodeDailyCubeBinary(buffer: ArrayBuffer): Merra2DailyCube {
 }
 
 async function fetchDailyCubeFromApi(date: string): Promise<Merra2DailyCube> {
-  const url = buildBaseApiUrl(`/api/merra2/pm25/daily-cube.bin?date=${encodeURIComponent(date)}`);
+  const params = new URLSearchParams({ date, v: CUBE_CACHE_SCHEMA });
+  const url = buildBaseApiUrl(`/api/merra2/pm25/daily-cube.bin?${params.toString()}`);
   const res = await fetch(url);
   if (!res.ok) {
     let message = `Daily cube request failed (${res.status})`;
@@ -155,12 +159,16 @@ async function fetchDailyCubeFromApi(date: string): Promise<Merra2DailyCube> {
   return decodeDailyCubeBinary(buffer);
 }
 
+function isPersistableCube(cube: Merra2DailyCube): boolean {
+  return cube.source === 'gesdisc';
+}
+
 export async function loadMerra2DailyCube(date: string): Promise<Merra2DailyCube> {
   const cached = memoryCache.get(date);
-  if (cached) return cached;
+  if (cached && isPersistableCube(cached)) return cached;
 
   const idbHit = await readCubeFromIdb(date);
-  if (idbHit) {
+  if (idbHit && isPersistableCube(idbHit)) {
     memoryCache.set(date, idbHit);
     return idbHit;
   }
@@ -171,7 +179,9 @@ export async function loadMerra2DailyCube(date: string): Promise<Merra2DailyCube
   const promise = fetchDailyCubeFromApi(date)
     .then(async (cube) => {
       memoryCache.set(date, cube);
-      await writeCubeToIdb(cube);
+      if (isPersistableCube(cube)) {
+        await writeCubeToIdb(cube);
+      }
       return cube;
     })
     .finally(() => inflight.delete(date));

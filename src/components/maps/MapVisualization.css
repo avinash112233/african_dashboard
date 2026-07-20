@@ -321,6 +321,10 @@
   cursor: pointer !important;
 }
 
+.leaflet-pane path.washu-station-marker {
+  cursor: pointer !important;
+}
+
 .leaflet-pane path.openaq-station-marker {
   cursor: pointer !important;
 }

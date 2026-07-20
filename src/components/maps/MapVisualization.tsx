@@ -4,10 +4,11 @@ import Merra2StationsLayer from './Merra2StationsLayer';
 import OpenAqStationsLayer from './OpenAqStationsLayer';
 import PM25HeatMapLayer, { type PM25Sample } from './PM25HeatMapLayer';
 import WashUPM25HeatMapLayer, { type WashUPM25Sample } from './WashUPM25HeatMapLayer';
+import WashuStationsLayer from './WashuStationsLayer';
 import Merra2Pm25GridLegend from './Merra2Pm25GridLegend';
 import WashUPm25GridLegend from './WashUPm25GridLegend';
 import AeronetAodLegend from './AeronetAodLegend';
-import type { WashUPeriod } from '../../services/washuApi';
+import type { WashUPeriod, WashUStationDailyRecord } from '../../services/washuApi';
 import L from 'leaflet';
 import CircleSelectLayer from './CircleSelectLayer';
 import CircleFireTable from './CircleFireTable';
@@ -134,6 +135,10 @@ interface MapVisualizationProps {
   aaqeDisplayType?: AaqeDisplayType;
   onAAQEForecastClick?: (point: AAQEForecastPoint) => void;
   showWashU?: boolean;
+  showWashuGridOverlay?: boolean;
+  showWashuStations?: boolean;
+  washuStations?: WashUStationDailyRecord[];
+  onWashuStationClick?: (station: WashUStationDailyRecord) => void;
   washuPeriod?: WashUPeriod;
   washuYear?: number;
   washuMonth?: number | null;
@@ -186,6 +191,10 @@ const MapVisualization = ({
   aaqeDisplayType = 'DAILY_AQI',
   onAAQEForecastClick,
   showWashU = false,
+  showWashuGridOverlay = true,
+  showWashuStations = true,
+  washuStations = [],
+  onWashuStationClick,
   washuPeriod = 'monthly',
   washuYear = new Date().getFullYear(),
   washuMonth = new Date().getMonth() + 1,
@@ -292,7 +301,7 @@ const MapVisualization = ({
         />
       )}
 
-      {showWashU && (
+      {showWashU && showWashuGridOverlay && (
         <WashUPM25HeatMapLayer
           period={washuPeriod}
           year={washuYear}
@@ -302,6 +311,14 @@ const MapVisualization = ({
           onLoadingChange={onWashuGridLoadingChange}
           onSourceChange={onWashuGridSourceChange}
           onMapClick={onWashuMapClick}
+        />
+      )}
+
+      {showWashU && showWashuStations && (
+        <WashuStationsLayer
+          stations={washuStations}
+          active
+          onStationClick={onWashuStationClick}
         />
       )}
 

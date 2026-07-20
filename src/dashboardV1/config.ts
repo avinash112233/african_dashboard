@@ -50,7 +50,7 @@ export const DASHBOARD_V1_LAYER_LABELS: Record<DashboardV1Layer, string> = {
   fires: 'Fire hotspots (VIIRS)',
   viirs: 'VIIRS true-color imagery',
   merra2: 'MERRA2 CNN PM2.5',
-  washu: 'WashU 1-km PM2.5',
+  washu: 'WashU SatPM2.5 (stations + grid)',
   openaq: 'OpenAQ ground PM2.5',
   aaqe: 'AAQE PM2.5 forecast',
 };
