@@ -41,3 +41,11 @@ setup-env.sh
 
 # Downloaded SatPM2.5 NetCDF cache
 .cache/
+
+# Local reference docs (not for repo)
+docs/
+
+# Technical assistance materials (local / team use only)
+technical-assistance/
+Technical Assistance/
+technical-assistance*.pdf
