@@ -7,7 +7,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { hourGridFromCube, loadMerra2DailyCube, type Merra2DailyCube } from '../../services/merra2GridCube';
-import { renderPm25GridNativeCells, samplePm25AtLatLonNearest } from '../../utils/pm25Colormap';
+import { renderPm25GridAqiCells, renderPm25GridNativeCells, samplePm25AtLatLonNearest } from '../../utils/pm25Colormap';
 import './PM25HeatMapLayer.css';
 
 export interface PM25Sample {
@@ -22,13 +22,46 @@ export interface PM25Sample {
   source: 'gesdisc' | 'sample';
 }
 
+export type Merra2GridSampler = (lat: number, lon: number) => PM25Sample | null;
+
 interface PM25HeatMapLayerProps {
   date: string;
   hour?: number;
   opacity?: number;
+  /** Dashboard 2 uses EPA AQI category colors; Dashboard 1 keeps the continuous PM2.5 ramp. */
+  colorMode?: 'continuous' | 'aqi';
   onPm25Sample?: (sample: PM25Sample | null) => void;
+  onGridSamplerChange?: (sampler: Merra2GridSampler | null) => void;
   onLoadingChange?: (loading: boolean) => void;
   onSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
+}
+
+function buildGridSampler(
+  grid: ReturnType<typeof hourGridFromCube> | null
+): Merra2GridSampler | null {
+  if (!grid) return null;
+  return (lat: number, lon: number) => {
+    const value = samplePm25AtLatLonNearest(grid, lat, lon);
+    if (value == null) return null;
+    return {
+      lat,
+      lon,
+      value,
+      date: grid.date,
+      hour: grid.hour,
+      min: grid.min,
+      max: grid.max,
+      units: grid.units,
+      source: grid.source,
+    };
+  };
+}
+
+function emitGridSampler(
+  grid: ReturnType<typeof hourGridFromCube> | null,
+  onGridSamplerChange?: (sampler: Merra2GridSampler | null) => void
+) {
+  onGridSamplerChange?.(buildGridSampler(grid));
 }
 
 function applyHourToMap(
@@ -36,10 +69,12 @@ function applyHourToMap(
   cube: Merra2DailyCube,
   hour: number,
   opacity: number,
+  colorMode: 'continuous' | 'aqi',
   overlayRef: MutableRefObject<L.ImageOverlay | null>
 ) {
   const grid = hourGridFromCube(cube, hour);
-  const dataUrl = renderPm25GridNativeCells(grid);
+  const dataUrl =
+    colorMode === 'aqi' ? renderPm25GridAqiCells(grid) : renderPm25GridNativeCells(grid);
   if (!dataUrl) return null;
 
   const { south, west, north, east } = grid.bounds;
@@ -65,7 +100,9 @@ const PM25HeatMapLayer = ({
   date,
   hour = 12,
   opacity = 0.65,
+  colorMode = 'continuous',
   onPm25Sample,
+  onGridSamplerChange,
   onLoadingChange,
   onSourceChange,
 }: PM25HeatMapLayerProps) => {
@@ -75,9 +112,11 @@ const PM25HeatMapLayer = ({
   const gridRef = useRef<ReturnType<typeof hourGridFromCube> | null>(null);
   const moveHandlerRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
   const onPm25SampleRef = useRef(onPm25Sample);
+  const onGridSamplerChangeRef = useRef(onGridSamplerChange);
   const onLoadingChangeRef = useRef(onLoadingChange);
   const onSourceChangeRef = useRef(onSourceChange);
   onPm25SampleRef.current = onPm25Sample;
+  onGridSamplerChangeRef.current = onGridSamplerChange;
   onLoadingChangeRef.current = onLoadingChange;
   onSourceChangeRef.current = onSourceChange;
 
@@ -92,7 +131,8 @@ const PM25HeatMapLayer = ({
         if (cancelled || !map) return;
         cubeRef.current = cube;
         onSourceChangeRef.current?.(cube.source, cube.fallbackReason);
-        gridRef.current = applyHourToMap(map, cube, hour, opacity, overlayRef) ?? null;
+        gridRef.current = applyHourToMap(map, cube, hour, opacity, colorMode, overlayRef) ?? null;
+        emitGridSampler(gridRef.current, onGridSamplerChangeRef.current);
 
         const emitSample = (latlng: L.LatLng) => {
           const g = gridRef.current;
@@ -130,6 +170,7 @@ const PM25HeatMapLayer = ({
       cancelled = true;
       onLoadingChangeRef.current?.(false);
       onPm25SampleRef.current?.(null);
+      onGridSamplerChangeRef.current?.(null);
       cubeRef.current = null;
       gridRef.current = null;
       if (moveHandlerRef.current) map.off('mousemove', moveHandlerRef.current);
@@ -139,12 +180,13 @@ const PM25HeatMapLayer = ({
         overlayRef.current = null;
       }
     };
-  }, [map, date, opacity]);
+  }, [map, date, opacity, colorMode]);
 
   useEffect(() => {
     if (!map || !cubeRef.current) return;
-    gridRef.current = applyHourToMap(map, cubeRef.current, hour, opacity, overlayRef) ?? null;
-  }, [map, hour, opacity]);
+    gridRef.current = applyHourToMap(map, cubeRef.current, hour, opacity, colorMode, overlayRef) ?? null;
+    emitGridSampler(gridRef.current, onGridSamplerChangeRef.current);
+  }, [map, hour, opacity, colorMode]);
 
   return null;
 };

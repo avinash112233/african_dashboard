@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
 import {
-  getAERONETData,
+  fetchAeronetSiteSeries,
   type AERONETDataPoint,
   type AERONETSite,
   type SiteAODMap,
@@ -34,14 +34,19 @@ import {
 import { calculateAQIFromPm25, getAqiCategory } from '../utils/aqiUtils';
 import {
   anchorFromAaqe,
-  anchorFromAeronet,
   anchorFromFire,
   anchorFromMerra2,
 } from '../analysis/locationAnchor';
 import type { AnalysisLocationContext } from '../analysis/types';
 import { computeDailyMeanAOD } from '../utils/aodUtils';
 import { formatDateMonthDayYear } from '../utils/dateFormat';
-import type { AnalysisRange, FireAnalysisRange, SelectedAAQEData, SelectedFireData } from './types';
+import type { FireAnalysisRange, SelectedAAQEData, SelectedFireData } from './types';
+import type { DashboardV2LayerKey } from './config';
+import {
+  getDefaultWashuSeriesRange,
+  getWashuAnchorMonth,
+  type WashuMonthRange,
+} from './washuPlotRange';
 
 export interface DashboardV2LayerFeaturesInput {
   showAeronet: boolean;
@@ -71,18 +76,11 @@ export interface DashboardV2LayerFeaturesInput {
   setAeronetAodVersion: (version: AERONETAODVersion) => void;
   onMetricUpdate: (selection: { label: string; value?: number; unit?: string }) => void;
   onSelectionMade?: () => void;
-}
-
-function getDateRange(
-  selectedDateStr: string,
-  range: AnalysisRange
-): { startDate: string; endDate: string } {
-  const today = dayjs().startOf('day');
-  const requested = dayjs(selectedDateStr, 'YYYY-MM-DD').startOf('day');
-  const end = requested.isAfter(today) ? today : requested;
-  const days = range === '7D' ? 7 : range === '30D' ? 30 : 90;
-  const start = end.subtract(days - 1, 'day');
-  return { startDate: start.format('YYYY-MM-DD'), endDate: end.format('YYYY-MM-DD') };
+  plotStartDate: string;
+  plotEndDate: string;
+  plotRangeLabel: string;
+  washuMapYear: number;
+  washuMapMonth: number;
 }
 
 export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput) {
@@ -112,7 +110,25 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     setAeronetAodVersion,
     onMetricUpdate,
     onSelectionMade,
+    plotStartDate: analysisStartDate,
+    plotEndDate: analysisEndDate,
+    plotRangeLabel: analysisRangeLabel,
+    washuMapYear,
+    washuMapMonth,
   } = input;
+
+  const washuAnchorMonth = useMemo(
+    () => getWashuAnchorMonth(washuMapYear, washuMapMonth),
+    [washuMapYear, washuMapMonth]
+  );
+
+  const applyWashuMonthRange = useCallback((range: WashuMonthRange) => {
+    setWashuSeriesStartYear(range.startYear);
+    setWashuSeriesStartMonth(range.startMonth);
+    setWashuSeriesEndYear(range.endYear);
+    setWashuSeriesEndMonth(range.endMonth);
+    setWashuAppliedSeriesRange(range);
+  }, []);
 
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
   const [selectedFire, setSelectedFire] = useState<SelectedFireData | null>(null);
@@ -124,10 +140,11 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   const [analysisAnchor, setAnalysisAnchor] = useState<AnalysisLocationContext | null>(null);
   const [chartData, setChartData] = useState<AERONETDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
+  const [chartFromCache, setChartFromCache] = useState(false);
 
   const [aeronetDateFrom, setAeronetDateFrom] = useState(() => dayjs().subtract(7, 'day'));
   const [aeronetDateTo, setAeronetDateTo] = useState(() => dayjs());
-  const [analysisRange, setAnalysisRange] = useState<AnalysisRange>('7D');
   const [fireAnalysisRange, setFireAnalysisRange] = useState<FireAnalysisRange>('7D');
 
   const [merra2Series, setMerra2Series] = useState<MERRA2StationTimeseriesPoint[]>([]);
@@ -154,16 +171,25 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   const [washuSeries, setWashuSeries] = useState<WashUTimeseriesPoint[]>([]);
   const [washuSeriesLoading, setWashuSeriesLoading] = useState(false);
   const [washuSeriesError, setWashuSeriesError] = useState<string | null>(null);
-  const [washuSeriesStartYear, setWashuSeriesStartYear] = useState(() => dayjs('2023-01-01').year());
-  const [washuSeriesStartMonth, setWashuSeriesStartMonth] = useState(1);
-  const [washuSeriesEndYear, setWashuSeriesEndYear] = useState(() => dayjs('2023-12-01').year());
-  const [washuSeriesEndMonth, setWashuSeriesEndMonth] = useState(12);
-  const [washuAppliedSeriesRange, setWashuAppliedSeriesRange] = useState({
-    startYear: dayjs('2023-01-01').year(),
-    startMonth: 1,
-    endYear: dayjs('2023-12-01').year(),
-    endMonth: 12,
+  const [washuSeriesStartYear, setWashuSeriesStartYear] = useState(() => {
+    const range = getDefaultWashuSeriesRange(getWashuAnchorMonth(2023, 12));
+    return range.startYear;
   });
+  const [washuSeriesStartMonth, setWashuSeriesStartMonth] = useState(() => {
+    const range = getDefaultWashuSeriesRange(getWashuAnchorMonth(2023, 12));
+    return range.startMonth;
+  });
+  const [washuSeriesEndYear, setWashuSeriesEndYear] = useState(() => {
+    const range = getDefaultWashuSeriesRange(getWashuAnchorMonth(2023, 12));
+    return range.endYear;
+  });
+  const [washuSeriesEndMonth, setWashuSeriesEndMonth] = useState(() => {
+    const range = getDefaultWashuSeriesRange(getWashuAnchorMonth(2023, 12));
+    return range.endMonth;
+  });
+  const [washuAppliedSeriesRange, setWashuAppliedSeriesRange] = useState(() =>
+    getDefaultWashuSeriesRange(getWashuAnchorMonth(2023, 12))
+  );
 
   const [circleSelectActive, setCircleSelectActive] = useState(false);
   const [circleCenter, setCircleCenter] = useState<[number, number] | null>(null);
@@ -171,14 +197,20 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   const [fireChartRectDrawActive, setFireChartRectDrawActive] = useState(false);
   const [fireChartBounds, setFireChartBounds] = useState<LatLonBounds | null>(null);
 
-  const { startDate: analysisStartDate, endDate: analysisEndDate } = getDateRange(
-    effectiveSelectedDateStr,
-    analysisRange
-  );
   const merra2AnalysisStartDate = merra2AppliedRange.start;
   const merra2AnalysisEndDate = merra2AppliedRange.end;
-  const analysisRangeLabel =
-    analysisRange === '7D' ? 'Last 7 Days' : analysisRange === '30D' ? 'Last 30 Days' : 'Last 90 Days';
+
+  useEffect(() => {
+    setMerra2DateFrom(dayjs(analysisStartDate, 'YYYY-MM-DD'));
+    setMerra2DateTo(dayjs(analysisEndDate, 'YYYY-MM-DD'));
+    setMerra2AppliedRange({ start: analysisStartDate, end: analysisEndDate });
+  }, [analysisStartDate, analysisEndDate]);
+
+  useEffect(() => {
+    setOpenAqDateFrom(dayjs(analysisStartDate, 'YYYY-MM-DD'));
+    setOpenAqDateTo(dayjs(analysisEndDate, 'YYYY-MM-DD'));
+    setOpenAqAppliedRange({ start: analysisStartDate, end: analysisEndDate });
+  }, [analysisStartDate, analysisEndDate]);
 
   const getFireDateTime = useCallback((acqDate?: string, acqTime?: string) => {
     const normalized = normalizeFireDate(acqDate);
@@ -297,42 +329,39 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   }, [openAqStations, showOpenAq]);
 
   useEffect(() => {
-    if (selectedSite) {
-      const querySite =
-        selectedSite.name && selectedSite.name !== selectedSite.site
-          ? selectedSite.name
-          : selectedSite.site;
-      if (!querySite || typeof querySite !== 'string') return;
-      setChartLoading(true);
-      const start = analysisStartDate;
-      const end = analysisEndDate;
-      getAERONETData(querySite, start, end, aeronetAodVersion)
-        .then((data) => setChartData(Array.isArray(data) ? data : []))
-        .catch(() => setChartData([]))
-        .finally(() => setChartLoading(false));
+    if (!selectedSite) {
+      setChartData([]);
+      setChartError(null);
+      setChartFromCache(false);
+      return;
     }
-  }, [analysisStartDate, analysisEndDate, selectedSite?.site, selectedSite?.name, aeronetAodVersion]);
+    let cancelled = false;
+    setChartLoading(true);
+    setChartError(null);
+    setChartFromCache(false);
+    fetchAeronetSiteSeries(selectedSite, analysisStartDate, analysisEndDate, aeronetAodVersion)
+      .then((result) => {
+        if (cancelled) return;
+        setChartData(Array.isArray(result.points) ? result.points : []);
+        setChartError(result.error ?? null);
+        setChartFromCache(Boolean(result.fromCache));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setChartData([]);
+        setChartError(err instanceof Error ? err.message : 'Failed to load AERONET data');
+        setChartFromCache(false);
+      })
+      .finally(() => {
+        if (!cancelled) setChartLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisStartDate, analysisEndDate, selectedSite, aeronetAodVersion]);
 
   const openAqAnalysisStartDate = openAqAppliedRange.start;
   const openAqAnalysisEndDate = openAqAppliedRange.end;
-
-  useEffect(() => {
-    const calendarEnd = dayjs(effectiveSelectedDateStr, 'YYYY-MM-DD');
-    const lastReading = selectedOpenAqStation?.datetime?.slice(0, 10)
-      ?? selectedOpenAqStation?.datetimeLast?.slice(0, 10);
-    const endBase =
-      lastReading && dayjs(lastReading, 'YYYY-MM-DD').isBefore(calendarEnd, 'day')
-        ? dayjs(lastReading, 'YYYY-MM-DD')
-        : calendarEnd;
-    const nextTo = endBase;
-    const nextFrom = endBase.subtract(6, 'day');
-    setOpenAqDateFrom(nextFrom);
-    setOpenAqDateTo(nextTo);
-    setOpenAqAppliedRange({
-      start: nextFrom.format('YYYY-MM-DD'),
-      end: nextTo.format('YYYY-MM-DD'),
-    });
-  }, [effectiveSelectedDateStr, selectedOpenAqStation?.sensorId, selectedOpenAqStation?.datetime, selectedOpenAqStation?.datetimeLast]);
 
   useEffect(() => {
     if (!showOpenAq || !selectedOpenAqStation || openAqMapMode !== 'daily') {
@@ -365,18 +394,6 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       });
     return () => controller.abort();
   }, [showOpenAq, openAqMapMode, selectedOpenAqStation?.sensorId, selectedOpenAqStation?.locationId, openAqAnalysisStartDate, openAqAnalysisEndDate]);
-
-  useEffect(() => {
-    const endBase = dayjs(merra2RequestedDate, 'YYYY-MM-DD');
-    const nextTo = endBase;
-    const nextFrom = endBase.subtract(6, 'day');
-    setMerra2DateFrom(nextFrom);
-    setMerra2DateTo(nextTo);
-    setMerra2AppliedRange({
-      start: nextFrom.format('YYYY-MM-DD'),
-      end: nextTo.format('YYYY-MM-DD'),
-    });
-  }, [merra2RequestedDate, selectedMerra2Station?.sitename]);
 
   useEffect(() => {
     if (!showMERRA2PM25 || !selectedMerra2Station) return;
@@ -543,7 +560,6 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       setSelectedOpenAqStation(null);
       setSelectedAAQE(null);
       setWashuPin(null);
-      setAnalysisAnchor(anchorFromAeronet(site));
       setChartData([]);
       const entry = siteAodMap[site.site];
       const aod =
@@ -581,8 +597,42 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     setSelectedSite(null);
     setChartData([]);
     setAnalysisAnchor(null);
-    onMetricUpdate({ label: 'Africa overview' });
+    onMetricUpdate({ label: 'Africa overview', unit: undefined, value: undefined });
   }, [onMetricUpdate]);
+
+  const dismissLayerSelection = useCallback(
+    (layer: DashboardV2LayerKey) => {
+      if (layer === 'aeronet') {
+        dismissAeronetSelection();
+        return;
+      }
+      if (layer === 'fires') {
+        setSelectedFire(null);
+        setCircleSelectActive(false);
+        setCircleCenter(null);
+        setFireChartRectDrawActive(false);
+        setFireChartBounds(null);
+        return;
+      }
+      if (layer === 'merra2') {
+        setSelectedMerra2Station(null);
+        return;
+      }
+      if (layer === 'openaq') {
+        setSelectedOpenAqStation(null);
+        return;
+      }
+      if (layer === 'washu') {
+        setWashuPin(null);
+        setWashuSeries([]);
+        return;
+      }
+      if (layer === 'aaqe') {
+        setSelectedAAQE(null);
+      }
+    },
+    [dismissAeronetSelection]
+  );
 
   const exportAODCSV = useCallback(() => {
     if (!selectedSite || chartData.length === 0) return;
@@ -720,16 +770,13 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   }, [merra2DateFrom, merra2DateTo]);
 
   const resetMerra2Range = useCallback(() => {
-    const endBase = dayjs(merra2RequestedDate, 'YYYY-MM-DD');
-    const nextTo = endBase;
-    const nextFrom = endBase.subtract(6, 'day');
-    setMerra2DateFrom(nextFrom);
-    setMerra2DateTo(nextTo);
+    setMerra2DateFrom(dayjs(analysisStartDate, 'YYYY-MM-DD'));
+    setMerra2DateTo(dayjs(analysisEndDate, 'YYYY-MM-DD'));
     setMerra2AppliedRange({
-      start: nextFrom.format('YYYY-MM-DD'),
-      end: nextTo.format('YYYY-MM-DD'),
+      start: analysisStartDate,
+      end: analysisEndDate,
     });
-  }, [merra2RequestedDate]);
+  }, [analysisStartDate, analysisEndDate]);
 
   const applyOpenAqRange = useCallback(() => {
     const from = openAqDateFrom;
@@ -743,25 +790,17 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   }, [openAqDateFrom, openAqDateTo]);
 
   const resetOpenAqRange = useCallback(() => {
-    const calendarEnd = dayjs(effectiveSelectedDateStr, 'YYYY-MM-DD');
-    const lastReading = selectedOpenAqStation?.datetime?.slice(0, 10)
-      ?? selectedOpenAqStation?.datetimeLast?.slice(0, 10);
-    const endBase =
-      lastReading && dayjs(lastReading, 'YYYY-MM-DD').isBefore(calendarEnd, 'day')
-        ? dayjs(lastReading, 'YYYY-MM-DD')
-        : calendarEnd;
-    const nextTo = endBase;
-    const nextFrom = endBase.subtract(6, 'day');
-    setOpenAqDateFrom(nextFrom);
-    setOpenAqDateTo(nextTo);
+    setOpenAqDateFrom(dayjs(analysisStartDate, 'YYYY-MM-DD'));
+    setOpenAqDateTo(dayjs(analysisEndDate, 'YYYY-MM-DD'));
     setOpenAqAppliedRange({
-      start: nextFrom.format('YYYY-MM-DD'),
-      end: nextTo.format('YYYY-MM-DD'),
+      start: analysisStartDate,
+      end: analysisEndDate,
     });
-  }, [effectiveSelectedDateStr, selectedOpenAqStation?.datetime, selectedOpenAqStation?.datetimeLast]);
+  }, [analysisStartDate, analysisEndDate]);
 
   const handleWashuMapClick = useCallback(
     (lat: number, lon: number) => {
+      applyWashuMonthRange(getDefaultWashuSeriesRange(washuAnchorMonth));
       setWashuPin({ lat, lon, pm25: null });
       setSelectedSite(null);
       setSelectedFire(null);
@@ -775,7 +814,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       });
       onSelectionMade?.();
     },
-    [onMetricUpdate, onSelectionMade]
+    [applyWashuMonthRange, washuAnchorMonth, onMetricUpdate, onSelectionMade]
   );
 
   const updateWashuPm25Sample = useCallback((value: number | null) => {
@@ -783,14 +822,69 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     setWashuPin((prev) => (prev ? { ...prev, pm25: value } : prev));
   }, []);
 
-  const applyWashuSeriesRange = useCallback(() => {
-    setWashuAppliedSeriesRange({
+  const washuDraftSeriesRange = useMemo(
+    () => ({
       startYear: washuSeriesStartYear,
       startMonth: washuSeriesStartMonth,
       endYear: washuSeriesEndYear,
       endMonth: washuSeriesEndMonth,
-    });
-  }, [washuSeriesStartYear, washuSeriesStartMonth, washuSeriesEndYear, washuSeriesEndMonth]);
+    }),
+    [washuSeriesStartYear, washuSeriesStartMonth, washuSeriesEndYear, washuSeriesEndMonth]
+  );
+
+  const washuSeriesRangePending = useMemo(
+    () =>
+      washuDraftSeriesRange.startYear !== washuAppliedSeriesRange.startYear ||
+      washuDraftSeriesRange.startMonth !== washuAppliedSeriesRange.startMonth ||
+      washuDraftSeriesRange.endYear !== washuAppliedSeriesRange.endYear ||
+      washuDraftSeriesRange.endMonth !== washuAppliedSeriesRange.endMonth,
+    [washuDraftSeriesRange, washuAppliedSeriesRange]
+  );
+
+  const setWashuSeriesStartMonthInput = useCallback((value: string) => {
+    const parsed = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!parsed) return;
+    const year = Number(parsed[1]);
+    const month = Number(parsed[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return;
+    setWashuSeriesStartYear(year);
+    setWashuSeriesStartMonth(month);
+  }, []);
+
+  const setWashuSeriesEndMonthInput = useCallback((value: string) => {
+    const parsed = /^(\d{4})-(\d{2})$/.exec(value);
+    if (!parsed) return;
+    const year = Number(parsed[1]);
+    const month = Number(parsed[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return;
+    setWashuSeriesEndYear(year);
+    setWashuSeriesEndMonth(month);
+  }, []);
+
+  const applyWashuSeriesPreset = useCallback(
+    (range: WashuMonthRange) => {
+      applyWashuMonthRange(range);
+    },
+    [applyWashuMonthRange]
+  );
+
+  const applyWashuSeriesRange = useCallback(() => {
+    setWashuAppliedSeriesRange(washuDraftSeriesRange);
+  }, [washuDraftSeriesRange]);
+
+  const resetWashuSeriesRange = useCallback(() => {
+    applyWashuMonthRange(getDefaultWashuSeriesRange(washuAnchorMonth));
+  }, [applyWashuMonthRange, washuAnchorMonth]);
+
+  const applyPlotRange = useCallback(() => {
+    setMerra2AppliedRange({ start: analysisStartDate, end: analysisEndDate });
+    setOpenAqAppliedRange({ start: analysisStartDate, end: analysisEndDate });
+  }, [analysisStartDate, analysisEndDate]);
+
+  const resetPlotRange = useCallback(() => {
+    setMerra2AppliedRange({ start: analysisStartDate, end: analysisEndDate });
+    setOpenAqAppliedRange({ start: analysisStartDate, end: analysisEndDate });
+  }, [analysisStartDate, analysisEndDate]);
 
   useEffect(() => {
     if (showWashU) return;
@@ -888,6 +982,8 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     analysisAnchor,
     chartData,
     chartLoading,
+    chartError,
+    chartFromCache,
 
     fireAnalysisRange,
     setFireAnalysisRange,
@@ -914,8 +1010,6 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     setAeronetDateFrom,
     aeronetDateTo,
     setAeronetDateTo,
-    analysisRange,
-    setAnalysisRange,
     analysisStartDate,
     analysisEndDate,
     analysisRangeLabel,
@@ -924,6 +1018,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     exportAODCSV,
     handleAeronetSiteClick,
     dismissAeronetSelection,
+    dismissLayerSelection,
 
     merra2Series,
     merra2SeriesLoading,
@@ -967,7 +1062,15 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     washuSeriesEndMonth,
     setWashuSeriesEndMonth,
     washuAppliedSeriesRange,
+    washuDraftSeriesRange,
+    washuSeriesRangePending,
+    setWashuSeriesStartMonthInput,
+    setWashuSeriesEndMonthInput,
+    applyWashuSeriesPreset,
     applyWashuSeriesRange,
+    resetWashuSeriesRange,
+    applyPlotRange,
+    resetPlotRange,
     handleWashuMapClick,
     updateWashuPm25Sample,
     activeSelectedWashU,

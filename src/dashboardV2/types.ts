@@ -30,4 +30,6 @@ export interface SelectedAAQEData {
 }
 
 export type AnalysisRange = '7D' | '30D' | '90D';
+export type PlotRangePreset = AnalysisRange;
+export type PlotRangeMode = PlotRangePreset | 'custom';
 export type FireAnalysisRange = '24H' | '48H' | '7D';

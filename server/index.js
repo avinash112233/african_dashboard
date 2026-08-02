@@ -55,9 +55,10 @@ function parseIsoDateParam(value, fieldName = 'date') {
 
 // Generic proxy helper — strips the local prefix and forwards to an upstream host.
 const PROXY_CACHE_TTL_MS = 15 * 60 * 1000;
+const AERONET_PROXY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const proxyResponseCache = new Map();
 
-async function proxyTo(upstream, stripPrefix, req, res, tag, { cacheable = false } = {}) {
+async function proxyTo(upstream, stripPrefix, req, res, tag, { cacheable = false, cacheTtlMs = PROXY_CACHE_TTL_MS } = {}) {
   try {
     const pathAndQuery = req.originalUrl.replace(new RegExp(`^${stripPrefix}`), '') || '/';
     const target = `${upstream}${pathAndQuery.startsWith('/') ? '' : '/'}${pathAndQuery}`;
@@ -65,7 +66,7 @@ async function proxyTo(upstream, stripPrefix, req, res, tag, { cacheable = false
 
     if (cacheKey) {
       const hit = proxyResponseCache.get(cacheKey);
-      if (hit && Date.now() - hit.ts < PROXY_CACHE_TTL_MS) {
+      if (hit && Date.now() - hit.ts < cacheTtlMs) {
         if (hit.contentType) res.setHeader('Content-Type', hit.contentType);
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('X-Proxy-Cache', 'HIT');
@@ -96,13 +97,30 @@ async function proxyTo(upstream, stripPrefix, req, res, tag, { cacheable = false
     res.send(body);
   } catch (err) {
     console.error(`[${tag} proxy] Error:`, err);
+    const pathAndQuery = req.originalUrl.replace(new RegExp(`^${stripPrefix}`), '') || '/';
+    const target = `${upstream}${pathAndQuery.startsWith('/') ? '' : '/'}${pathAndQuery}`;
+    const cacheKey = cacheable && req.method === 'GET' ? `${tag}:${target}` : null;
+    if (cacheKey) {
+      const hit = proxyResponseCache.get(cacheKey);
+      if (hit) {
+        if (hit.contentType) res.setHeader('Content-Type', hit.contentType);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('X-Proxy-Cache', 'STALE');
+        res.status(hit.status);
+        res.send(hit.body);
+        return;
+      }
+    }
     res.status(502).json({ error: err?.message || `${tag} proxy failed` });
   }
 }
 
 // AERONET + AAQE GeoJSON — same NASA host, one proxy covers both.
 app.use('/api/aeronet', (req, res) =>
-  proxyTo('https://aeronet.gsfc.nasa.gov', '/api/aeronet', req, res, 'AERONET')
+  proxyTo('https://aeronet.gsfc.nasa.gov', '/api/aeronet', req, res, 'AERONET', {
+    cacheable: req.method === 'GET' && req.originalUrl.includes('print_web_data_v3'),
+    cacheTtlMs: AERONET_PROXY_CACHE_TTL_MS,
+  })
 );
 
 // FIRMS — compact 7-day Africa fire point feed (fetched + minified + cached server-side;

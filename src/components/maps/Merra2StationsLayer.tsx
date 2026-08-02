@@ -13,6 +13,10 @@ const MARKER_CHUNK = 120;
 interface Merra2StationsLayerProps {
   stations: MERRA2StationDailyRecord[];
   onStationClick?: (station: MERRA2StationDailyRecord) => void;
+  /** Dashboard 2: show grid PM2.5 at station location in tooltip. */
+  showGridCompare?: boolean;
+  merra2GridHour?: number;
+  sampleGridPm25?: (lat: number, lon: number) => number | null;
   active?: boolean;
 }
 
@@ -20,10 +24,43 @@ function stationKey(s: MERRA2StationDailyRecord): string {
   return `${s.sitename}|${s.latitude}|${s.longitude}`;
 }
 
+function buildStationTooltip(
+  s: MERRA2StationDailyRecord,
+  showGridCompare: boolean,
+  gridHour: number,
+  sampleGridPm25?: (lat: number, lon: number) => number | null
+): string {
+  const aqi = calculateAQIFromPm25(s.pm25);
+  const aqiCategory = getAqiCategory(aqi);
+  const lines = [
+    `<strong>${s.sitename}</strong>`,
+    `Station · daily mean: ${s.pm25.toFixed(1)} µg/m³`,
+    `AQI ${aqi ?? '—'} · ${aqiCategory.label}`,
+  ];
+
+  if (showGridCompare && sampleGridPm25) {
+    const gridPm25 = sampleGridPm25(s.latitude, s.longitude);
+    const hourLabel = String(gridHour).padStart(2, '0');
+    if (gridPm25 != null && Number.isFinite(gridPm25)) {
+      const gridAqi = calculateAQIFromPm25(gridPm25);
+      const gridCat = getAqiCategory(gridAqi);
+      lines.push(`Grid · ${hourLabel} UTC: ${gridPm25.toFixed(1)} µg/m³`);
+      lines.push(`Grid AQI ${gridAqi ?? '—'} · ${gridCat.label}`);
+    } else {
+      lines.push(`Grid · ${hourLabel} UTC: —`);
+    }
+  }
+
+  return lines.join('<br/>');
+}
+
 function createStationMarker(
   s: MERRA2StationDailyRecord,
   renderer: L.Canvas,
-  onClickRef: RefObject<((station: MERRA2StationDailyRecord) => void) | undefined>
+  onClickRef: RefObject<((station: MERRA2StationDailyRecord) => void) | undefined>,
+  showGridCompareRef: RefObject<boolean>,
+  gridHourRef: RefObject<number>,
+  sampleGridRef: RefObject<((lat: number, lon: number) => number | null) | undefined>
 ): L.CircleMarker {
   const aqi = calculateAQIFromPm25(s.pm25);
   const aqiCategory = getAqiCategory(aqi);
@@ -46,8 +83,24 @@ function createStationMarker(
     onClickRef.current?.(s);
   });
 
+  marker.on('mouseover', () => {
+    marker.setTooltipContent(
+      buildStationTooltip(
+        s,
+        showGridCompareRef.current,
+        gridHourRef.current,
+        sampleGridRef.current
+      )
+    );
+  });
+
   marker.bindTooltip(
-    `${s.sitename}: AQI ${aqi ?? '—'} (${aqiCategory.label}) · PM2.5 ${s.pm25.toFixed(2)} µg/m³`,
+    buildStationTooltip(
+      s,
+      showGridCompareRef.current,
+      gridHourRef.current,
+      sampleGridRef.current
+    ),
     { direction: 'top', offset: [0, -6], className: 'merra2-station-tooltip' }
   );
 
@@ -57,6 +110,9 @@ function createStationMarker(
 const Merra2StationsLayer = memo(function Merra2StationsLayer({
   stations,
   onStationClick,
+  showGridCompare = false,
+  merra2GridHour = 12,
+  sampleGridPm25,
   active = true,
 }: Merra2StationsLayerProps) {
   const map = useMap();
@@ -65,10 +121,30 @@ const Merra2StationsLayer = memo(function Merra2StationsLayer({
   const markersRef = useRef<Map<string, L.CircleMarker>>(new Map());
   const buildGenRef = useRef(0);
   const onClickRef = useRef(onStationClick);
+  const showGridCompareRef = useRef(showGridCompare);
+  const gridHourRef = useRef(merra2GridHour);
+  const sampleGridRef = useRef(sampleGridPm25);
 
   useEffect(() => {
     onClickRef.current = onStationClick;
   }, [onStationClick]);
+
+  useEffect(() => {
+    showGridCompareRef.current = showGridCompare;
+    gridHourRef.current = merra2GridHour;
+    sampleGridRef.current = sampleGridPm25;
+  }, [showGridCompare, merra2GridHour, sampleGridPm25]);
+
+  useEffect(() => {
+    if (!showGridCompare && !sampleGridPm25) return;
+    for (const s of stations) {
+      const marker = markersRef.current.get(stationKey(s));
+      if (!marker) continue;
+      marker.setTooltipContent(
+        buildStationTooltip(s, showGridCompare, merra2GridHour, sampleGridPm25)
+      );
+    }
+  }, [stations, showGridCompare, merra2GridHour, sampleGridPm25]);
 
   useEffect(() => {
     if (!map || !active) {
@@ -116,7 +192,14 @@ const Merra2StationsLayer = memo(function Merra2StationsLayer({
       for (; index < end; index++) {
         const s = toAdd[index];
         const key = stationKey(s);
-        const marker = createStationMarker(s, renderer, onClickRef);
+        const marker = createStationMarker(
+          s,
+          renderer,
+          onClickRef,
+          showGridCompareRef,
+          gridHourRef,
+          sampleGridRef
+        );
         marker.addTo(group);
         markersRef.current.set(key, marker);
       }
@@ -134,13 +217,16 @@ const Merra2StationsLayer = memo(function Merra2StationsLayer({
         const aqi = calculateAQIFromPm25(s.pm25);
         const aqiCategory = getAqiCategory(aqi);
         existing.setStyle({ fillColor: aqiCategory.color, color: '#334155' });
+        existing.setTooltipContent(
+          buildStationTooltip(s, showGridCompare, merra2GridHour, sampleGridPm25)
+        );
       }
     }
 
     return () => {
       buildGenRef.current += 1;
     };
-  }, [map, active, stations]);
+  }, [map, active, stations, showGridCompare, merra2GridHour, sampleGridPm25]);
 
   useEffect(() => {
     return () => {

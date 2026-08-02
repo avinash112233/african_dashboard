@@ -375,6 +375,8 @@ export interface AeronetSelectedPanelProps {
   site: AERONETSite;
   chartData: AERONETDataPoint[];
   chartLoading: boolean;
+  chartError?: string | null;
+  chartFromCache?: boolean;
   aeronetStart: string;
   aeronetEnd: string;
   onExportCsv?: () => void;
@@ -391,6 +393,8 @@ export function AeronetSelectedPanel({
   site,
   chartData,
   chartLoading,
+  chartError,
+  chartFromCache,
   aeronetStart,
   aeronetEnd,
   onExportCsv,
@@ -412,24 +416,52 @@ export function AeronetSelectedPanel({
 
   return (
     <div className="aeronet-panel">
-      <div className="merra2-panel-header">
-        <p className="merra2-panel-site">{site.name ?? site.site}</p>
-        <p className="merra2-panel-meta">
-          AERONET AOD Station · {site.site}
-          {site.elevation != null && ` · ${site.elevation.toFixed(0)} m`}
-        </p>
-        <p className="merra2-panel-meta">
-          {(site.latitude ?? 0).toFixed(3)}°, {(site.longitude ?? 0).toFixed(3)}°
-        </p>
-        <p className="merra2-panel-meta">
-          Requested range: {formatDateMonthDayYear(aeronetStart)} – {formatDateMonthDayYear(aeronetEnd)}
-        </p>
+      <div className="aeronet-site-header">
+        <div className="aeronet-site-header-top">
+          <h3 className="aeronet-site-name">{site.name ?? site.site}</h3>
+          <span className="aeronet-site-badge">AERONET AOD Station</span>
+        </div>
+
+        <div className="aeronet-site-facts" aria-label="Station details">
+          <div className="aeronet-site-fact">
+            <span className="aeronet-site-fact-label">Site ID</span>
+            <span className="aeronet-site-fact-value">{site.site}</span>
+          </div>
+          <div className="aeronet-site-fact">
+            <span className="aeronet-site-fact-label">Elevation</span>
+            <span className="aeronet-site-fact-value">
+              {site.elevation != null && Number.isFinite(site.elevation)
+                ? `${site.elevation.toFixed(0)} m`
+                : '—'}
+            </span>
+          </div>
+          <div className="aeronet-site-fact">
+            <span className="aeronet-site-fact-label">Latitude</span>
+            <span className="aeronet-site-fact-value">{(site.latitude ?? 0).toFixed(3)}°</span>
+          </div>
+          <div className="aeronet-site-fact">
+            <span className="aeronet-site-fact-label">Longitude</span>
+            <span className="aeronet-site-fact-value">{(site.longitude ?? 0).toFixed(3)}°</span>
+          </div>
+        </div>
+
+        <div className="aeronet-site-range">
+          <i className="bi bi-calendar-range" aria-hidden="true" />
+          <span className="aeronet-site-range-label">Analysis range</span>
+          <span className="aeronet-site-range-value">
+            {formatDateMonthDayYear(aeronetStart)} – {formatDateMonthDayYear(aeronetEnd)}
+          </span>
+        </div>
       </div>
 
       {chartLoading ? (
-        <p className="mini-note" style={{ padding: '2px 0 6px' }}>Loading AOD data…</p>
+        <p className="aeronet-site-status aeronet-site-status--loading">Loading AOD data…</p>
+      ) : chartError && chartData.length === 0 ? (
+        <p className="aeronet-site-status aeronet-site-status--empty">{chartError}</p>
       ) : chartData.length === 0 ? (
-        <p className="mini-note" style={{ padding: '2px 0 6px' }}>No AOD measurements in this date range.</p>
+        <p className="aeronet-site-status aeronet-site-status--empty">
+          No AOD measurements in this date range for this site.
+        </p>
       ) : (
         <>
           <div className="aod-metrics-grid">
@@ -450,9 +482,16 @@ export function AeronetSelectedPanel({
           {dataRangeLabel && (
             <p className="mini-note" style={{ marginTop: 10 }}>
               {dataRangeLabel} · {chartData.length} measurements ({dailyMean.length} daily means)
+              {chartFromCache ? ' · cached' : ''}
             </p>
           )}
         </>
+      )}
+
+      {chartError && chartData.length > 0 && (
+        <p className="aeronet-site-status aeronet-site-status--loading" style={{ marginTop: 8 }}>
+          {chartError}
+        </p>
       )}
 
       {chartData.length > 0 && onExportCsv && (

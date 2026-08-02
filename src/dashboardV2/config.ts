@@ -53,13 +53,13 @@ export const DASHBOARD_V2_WORKFLOWS: Record<AnalysisWorkflow, WorkflowConfig> = 
         heatCapable: true,
       },
     ],
-    heatProducts: ['merra2_cnn_pm25', 'washu_satpm25'],
+    heatProducts: ['merra2_cnn_pm25', 'washu_satpm25', 'aeronet_aod'],
     defaultProductId: 'aeronet_aod',
   },
   nrt: {
     title: 'Near-real-time satellite analysis',
     description:
-      'Near-real-time products focus on VIIRS true-color context, fire hotspots, and latest OpenAQ ground PM2.5 for event interpretation.',
+      'Near-real-time products focus on VIIRS true-color context, fire hotspots, AERONET AOD, and latest OpenAQ ground PM2.5 for event interpretation.',
     products: [
       {
         id: 'fire_hotspots',
@@ -73,6 +73,13 @@ export const DASHBOARD_V2_WORKFLOWS: Record<AnalysisWorkflow, WorkflowConfig> = 
         label: 'VIIRS true-color context',
         unit: 'qualitative',
         layer: 'viirs',
+        heatCapable: false,
+      },
+      {
+        id: 'aeronet_aod',
+        label: 'AERONET AOD',
+        unit: 'AOD 500/550 nm',
+        layer: 'aeronet',
         heatCapable: false,
       },
       {
@@ -201,4 +208,15 @@ export function getProductById(workflow: AnalysisWorkflow, productId: string): D
 
 export function getDefaultProductId(workflow: AnalysisWorkflow): string {
   return DASHBOARD_V2_WORKFLOWS[workflow].defaultProductId;
+}
+
+const POINT_ONLY_PRODUCT_IDS = new Set([
+  'aeronet_aod',
+  'historical_obs',
+  'openaq_pm25',
+  'fire_hotspots',
+]);
+
+export function isPointOnlyProduct(productId: string): boolean {
+  return POINT_ONLY_PRODUCT_IDS.has(productId);
 }

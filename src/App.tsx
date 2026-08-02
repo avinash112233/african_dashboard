@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -10,6 +10,7 @@ import Navigation from './components/layout/Navigation';
 import ErrorBoundary from './components/ErrorBoundary';
 import AboutPage from './pages/AboutPage';
 import { isDashboardV2Enabled } from './utils/featureFlags';
+import { ensureFiresPrefetched } from './services/firmsApi';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const DashboardPageV2 = lazy(() => import('./pages/DashboardPageV2'));
@@ -22,6 +23,10 @@ const PageFallback = () => (
 
 function App() {
   const dashboardV2Enabled = isDashboardV2Enabled();
+
+  useEffect(() => {
+    void ensureFiresPrefetched();
+  }, []);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>

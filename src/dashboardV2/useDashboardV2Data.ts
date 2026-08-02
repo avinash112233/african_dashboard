@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import dayjs, { type Dayjs } from 'dayjs';
-import { getNOAA21VIIRS7DayFromWFS, peekFirePoints, prefetchFires, type FIRMSFirePoint } from '../services/firmsApi';
+import { getNOAA21VIIRS7DayFromWFS, peekFirePoints, ensureFiresPrefetched, subscribeFirePoints, type FIRMSFirePoint } from '../services/firmsApi';
 import {
   getAERONETDataAfrica,
   getAfricanAERONETSites,
@@ -43,8 +43,15 @@ import {
   getProductById,
   type DashboardV2LayerKey,
 } from './config';
+import {
+  getPresetPlotRange,
+  normalizeCustomPlotRange,
+  plotRangeLabel,
+} from './plotRange';
+import type { PlotRangeMode, PlotRangePreset } from './types';
 import { washuPeriodFromDate, loadWashUGrid, type WashUPeriod } from '../services/washuApi';
 import { loadMerra2DailyCube } from '../services/merra2GridCube';
+import { formatDateMonthDayYear } from '../utils/dateFormat';
 import {
   merra2DefaultDate,
   MERRA2_DEFAULT_DATE,
@@ -65,14 +72,20 @@ export function useDashboardV2Data() {
   const [productId, setProductId] = useState(getDefaultProductId('historical'));
   const [heatProductId, setHeatProductId] = useState(getDefaultProductId('historical'));
   const [selectedDate, setSelectedDate] = useState<Dayjs>(() => todayDefaultDate());
-  const [plotStartDate, setPlotStartDate] = useState(() => dayjs().subtract(30, 'day').format('YYYY-MM-DD'));
-  const [plotEndDate, setPlotEndDate] = useState(() => dayjs().format('YYYY-MM-DD'));
+  const [plotRangeMode, setPlotRangeMode] = useState<PlotRangeMode>('7D');
+  const initialPlotRange = getPresetPlotRange(todayDefaultDate().format('YYYY-MM-DD'), '7D');
+  const [plotStartDate, setPlotStartDate] = useState(initialPlotRange.startDate);
+  const [plotEndDate, setPlotEndDate] = useState(initialPlotRange.endDate);
+  const [appliedPlotRangeMode, setAppliedPlotRangeMode] = useState<PlotRangeMode>('7D');
+  const [appliedPlotStartDate, setAppliedPlotStartDate] = useState(initialPlotRange.startDate);
+  const [appliedPlotEndDate, setAppliedPlotEndDate] = useState(initialPlotRange.endDate);
   const [country, setCountry] = useState('Africa overview');
   const [city, setCity] = useState('— select country first —');
   const [stationNetwork, setStationNetwork] = useState('All station networks');
   const [showHeatMap, setShowHeatMap] = useState(true);
   const [heatMapOpacity, setHeatMapOpacity] = useState(78);
   const [showColorbar, setShowColorbar] = useState(true);
+  const [showAeronetStations, setShowAeronetStations] = useState(true);
   const [forecastLeadHours, setForecastLeadHours] = useState(24);
   const [mapSelectionLabel, setMapSelectionLabel] = useState('Africa overview');
   const [selectedMetric, setSelectedMetric] = useState<DashboardV2Selection | null>(null);
@@ -137,6 +150,94 @@ export function useDashboardV2Data() {
 
   const effectiveSelectedDate = selectedDate.isAfter(dayjs(), 'day') ? dayjs() : selectedDate;
   const effectiveSelectedDateStr = effectiveSelectedDate.format('YYYY-MM-DD');
+
+  const effectivePlotRange = useMemo(() => {
+    if (appliedPlotRangeMode !== 'custom') {
+      return getPresetPlotRange(effectiveSelectedDateStr, appliedPlotRangeMode);
+    }
+    return (
+      normalizeCustomPlotRange(appliedPlotStartDate, appliedPlotEndDate) ??
+      getPresetPlotRange(effectiveSelectedDateStr, '7D')
+    );
+  }, [appliedPlotRangeMode, appliedPlotStartDate, appliedPlotEndDate, effectiveSelectedDateStr]);
+
+  const effectivePlotRangeLabel = useMemo(
+    () => plotRangeLabel(appliedPlotRangeMode),
+    [appliedPlotRangeMode]
+  );
+
+  const plotRangePending = useMemo(
+    () =>
+      plotRangeMode !== appliedPlotRangeMode ||
+      plotStartDate !== appliedPlotStartDate ||
+      plotEndDate !== appliedPlotEndDate,
+    [
+      plotRangeMode,
+      appliedPlotRangeMode,
+      plotStartDate,
+      appliedPlotStartDate,
+      plotEndDate,
+      appliedPlotEndDate,
+    ]
+  );
+
+  const commitPlotRange = useCallback(
+    (mode: PlotRangeMode, startDate: string, endDate: string) => {
+      setAppliedPlotRangeMode(mode);
+      setAppliedPlotStartDate(startDate);
+      setAppliedPlotEndDate(endDate);
+    },
+    []
+  );
+
+  const setPlotRangePreset = useCallback(
+    (preset: PlotRangePreset) => {
+      setPlotRangeMode(preset);
+      const range = getPresetPlotRange(effectiveSelectedDateStr, preset);
+      setPlotStartDate(range.startDate);
+      setPlotEndDate(range.endDate);
+      commitPlotRange(preset, range.startDate, range.endDate);
+    },
+    [effectiveSelectedDateStr, commitPlotRange]
+  );
+
+  const setPlotStartDateCustom = useCallback((date: string) => {
+    setPlotRangeMode('custom');
+    setPlotStartDate(date);
+  }, []);
+
+  const setPlotEndDateCustom = useCallback((date: string) => {
+    setPlotRangeMode('custom');
+    setPlotEndDate(date);
+  }, []);
+
+  const applyPlotRange = useCallback(() => {
+    if (plotRangeMode === 'custom') {
+      const range =
+        normalizeCustomPlotRange(plotStartDate, plotEndDate) ??
+        getPresetPlotRange(effectiveSelectedDateStr, '7D');
+      setPlotStartDate(range.startDate);
+      setPlotEndDate(range.endDate);
+      commitPlotRange('custom', range.startDate, range.endDate);
+      return;
+    }
+    const range = getPresetPlotRange(effectiveSelectedDateStr, plotRangeMode);
+    setPlotStartDate(range.startDate);
+    setPlotEndDate(range.endDate);
+    commitPlotRange(plotRangeMode, range.startDate, range.endDate);
+  }, [plotRangeMode, plotStartDate, plotEndDate, effectiveSelectedDateStr, commitPlotRange]);
+
+  useEffect(() => {
+    if (appliedPlotRangeMode === 'custom') return;
+    const range = getPresetPlotRange(effectiveSelectedDateStr, appliedPlotRangeMode);
+    setAppliedPlotStartDate(range.startDate);
+    setAppliedPlotEndDate(range.endDate);
+    if (plotRangeMode !== 'custom') {
+      setPlotRangeMode(appliedPlotRangeMode);
+      setPlotStartDate(range.startDate);
+      setPlotEndDate(range.endDate);
+    }
+  }, [effectiveSelectedDateStr, appliedPlotRangeMode, plotRangeMode]);
 
   const merra2RequestedDate = useMemo(() => {
     if (!merra2LatestDate) return effectiveSelectedDateStr;
@@ -274,28 +375,37 @@ export function useDashboardV2Data() {
   const resetDashboard = useCallback(() => {
     changeWorkflow('historical');
     setSelectedDate(todayDefaultDate());
-    setPlotStartDate(dayjs().subtract(30, 'day').format('YYYY-MM-DD'));
-    setPlotEndDate(dayjs().format('YYYY-MM-DD'));
+    setPlotRangeMode('7D');
+    const range = getPresetPlotRange(todayDefaultDate().format('YYYY-MM-DD'), '7D');
+    setPlotStartDate(range.startDate);
+    setPlotEndDate(range.endDate);
+    setAppliedPlotRangeMode('7D');
+    setAppliedPlotStartDate(range.startDate);
+    setAppliedPlotEndDate(range.endDate);
     setCountry('Africa overview');
     setCity('— select country first —');
     setStationNetwork('All station networks');
     setShowHeatMap(true);
     setHeatMapOpacity(78);
     setShowColorbar(true);
+    setShowAeronetStations(true);
     setForecastLeadHours(24);
     setMapSelectionLabel('Africa overview');
     setSelectedMetric(null);
   }, [changeWorkflow]);
 
-  // Warm fire cache on dashboard open (silent background refresh).
+  // Warm fire cache on dashboard open; subscribe so in-flight App-level prefetch updates state too.
   useEffect(() => {
     let cancelled = false;
-    prefetchFires().then((pts) => {
-      if (!cancelled && pts.length > 0) {
-        setFirePoints((prev) => (prev.length > 0 ? prev : pts));
-      }
-    }).catch(() => {});
-    return () => { cancelled = true; };
+    const apply = (pts: FIRMSFirePoint[]) => {
+      if (!cancelled && pts.length > 0) setFirePoints(pts);
+    };
+    const unsub = subscribeFirePoints(apply);
+    void ensureFiresPrefetched().then(apply).catch(() => {});
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, []);
 
   // Spinner only when the fires layer is visible and we still have no points.
@@ -311,9 +421,15 @@ export function useDashboardV2Data() {
     let cancelled = false;
     setFireLoading(true);
     getNOAA21VIIRS7DayFromWFS()
-      .then((pts) => { if (!cancelled && pts.length > 0) setFirePoints(pts); })
-      .finally(() => { if (!cancelled) setFireLoading(false); });
-    return () => { cancelled = true; };
+      .then((pts) => {
+        if (!cancelled && pts.length > 0) setFirePoints(pts);
+      })
+      .finally(() => {
+        if (!cancelled) setFireLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [showFires, firePoints.length]);
 
   useEffect(() => {
@@ -370,13 +486,54 @@ export function useDashboardV2Data() {
     };
   }, []);
 
+  // Snap to latest MERRA2 date once when parquet metadata arrives (Dashboard 1 parity).
   useEffect(() => {
-    if (!merra2LatestDate || workflow !== 'historical' || !layerOn('merra2')) return;
+    if (!merra2LatestDate || workflow !== 'historical' || !activeLayers.includes('merra2')) return;
     setSelectedDate(merra2DefaultDate(merra2LatestDate));
-  }, [merra2LatestDate, workflow, layerOn]);
+  }, [merra2LatestDate]);
+
+  // When archive cutoff arrives while Historical OpenAQ is active, snap only provisional defaults.
+  useEffect(() => {
+    if (!openAqArchiveCutoffDate || workflow !== 'historical' || !activeLayers.includes('openaq')) return;
+    const target = openAqHistoricalDefaultDate(openAqArchiveCutoffDate);
+    setSelectedDate((prev) => {
+      if (prev.isSame(target, 'day')) return prev;
+      if (prev.isAfter(target, 'day')) return target;
+      const provisional =
+        prev.isSame(dayjs(), 'day')
+        || prev.isSame(dayjs().subtract(1, 'day'), 'day')
+        || prev.format('YYYY-MM-DD') === MERRA2_DEFAULT_DATE;
+      return provisional ? target : prev;
+    });
+  }, [openAqArchiveCutoffDate, workflow, activeLayers]);
+
+  const setMapValidDate = useCallback(
+    (next: Dayjs) => {
+      let clamped = next.isAfter(dayjs(), 'day') ? dayjs() : next;
+      if (workflow === 'historical' && activeLayers.includes('washu')) {
+        const maxWashu = dayjs(MERRA2_DEFAULT_DATE, 'YYYY-MM-DD');
+        if (clamped.isAfter(maxWashu, 'day')) clamped = maxWashu;
+      }
+      if (merra2LatestDate && activeLayers.includes('merra2')) {
+        const maxMerra2 = dayjs(merra2LatestDate, 'YYYY-MM-DD');
+        if (clamped.isAfter(maxMerra2, 'day')) clamped = maxMerra2;
+      }
+
+      setSelectedDate(clamped);
+      setMapSelectionLabel('Africa overview');
+      setSelectedMetric(null);
+
+      if (workflow === 'forecast') {
+        const iso = clamped.format('YYYY-MM-DD');
+        setAaqeForecastDate(iso);
+        setAaqeForecastDayIndex(0);
+      }
+    },
+    [workflow, activeLayers, merra2LatestDate]
+  );
 
   useEffect(() => {
-    if (!preloadHistoricalLayers) return;
+    if (!showAeronet) return;
     let cancelled = false;
     const t = window.setTimeout(() => {
       getAERONETDataAfrica(effectiveSelectedDateStr, effectiveSelectedDateStr, aeronetAodVersion)
@@ -391,10 +548,10 @@ export function useDashboardV2Data() {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [preloadHistoricalLayers, effectiveSelectedDateStr, aeronetAodVersion]);
+  }, [showAeronet, effectiveSelectedDateStr, aeronetAodVersion]);
 
   useEffect(() => {
-    if (!preloadHistoricalLayers) return;
+    if (!showMERRA2PM25 && !preloadHistoricalLayers) return;
     let cancelled = false;
 
     const loadStations = async () => {
@@ -451,7 +608,7 @@ export function useDashboardV2Data() {
     return () => {
       cancelled = true;
     };
-  }, [merra2RequestedDate, preloadHistoricalLayers, merra2LatestDate]);
+  }, [merra2RequestedDate, preloadHistoricalLayers, merra2LatestDate, showMERRA2PM25]);
 
   // Warm MERRA2 + WashU grid cubes in IndexedDB before the user switches layers.
   useEffect(() => {
@@ -580,7 +737,8 @@ export function useDashboardV2Data() {
           byDateFinal[iso] = pts;
         }
 
-        const defaultDay = forecastDays[1] ?? forecastDays[0];
+        const defaultDay =
+          forecastDays.find((d) => d.iso === requested) ?? forecastDays[0];
         setAaqeInitDate(initDate);
         setAaqeForecastDayIndex(defaultDay.dayIndex);
         setAaqeForecastByDate(byDateFinal);
@@ -608,8 +766,12 @@ export function useDashboardV2Data() {
   }, [aaqeForecastDate, aaqeForecastByDate]);
 
   const handleMapPointSelect = useCallback((selection: DashboardV2Selection) => {
-    setSelectedMetric(selection.value != null ? selection : null);
     setMapSelectionLabel(selection.label);
+    if (selection.value != null && Number.isFinite(selection.value)) {
+      setSelectedMetric(selection);
+      return;
+    }
+    setSelectedMetric(null);
   }, []);
 
   const resetMapSelection = useCallback(() => {
@@ -635,10 +797,11 @@ export function useDashboardV2Data() {
 
   const contextChips = useMemo(() => {
     const chips = [workflowConfig.title.split(' ')[0], activeProduct.label];
+    chips.push(formatDateMonthDayYear(effectiveSelectedDateStr));
     if (country !== 'Africa overview') chips.push(country);
     if (city && !city.startsWith('—')) chips.push(city);
     return chips;
-  }, [workflowConfig.title, activeProduct.label, country, city]);
+  }, [workflowConfig.title, activeProduct.label, effectiveSelectedDateStr, country, city]);
 
   return {
     workflow,
@@ -658,11 +821,19 @@ export function useDashboardV2Data() {
     setOpenAqMapModeOverride,
     selectedDate,
     setSelectedDate,
+    setMapValidDate,
     effectiveSelectedDateStr,
+    plotRangeMode,
+    setPlotRangePreset,
+    applyPlotRange,
+    plotRangePending,
+    plotRangeLabel: effectivePlotRangeLabel,
+    effectivePlotStartDate: effectivePlotRange.startDate,
+    effectivePlotEndDate: effectivePlotRange.endDate,
     plotStartDate,
-    setPlotStartDate,
+    setPlotStartDate: setPlotStartDateCustom,
     plotEndDate,
-    setPlotEndDate,
+    setPlotEndDate: setPlotEndDateCustom,
     country,
     setCountry,
     city,
@@ -675,6 +846,8 @@ export function useDashboardV2Data() {
     setHeatMapOpacity,
     showColorbar,
     setShowColorbar,
+    showAeronetStations,
+    setShowAeronetStations,
     forecastLeadHours,
     setForecastLeadHours,
     mapSelectionLabel,

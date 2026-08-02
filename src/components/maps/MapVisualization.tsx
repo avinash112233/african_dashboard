@@ -1,8 +1,8 @@
-import { useState, memo, useEffect } from 'react';
+import { useState, memo, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, LayerGroup, LayersControl, useMap, useMapEvents, CircleMarker, Tooltip } from 'react-leaflet';
 import Merra2StationsLayer from './Merra2StationsLayer';
 import OpenAqStationsLayer from './OpenAqStationsLayer';
-import PM25HeatMapLayer, { type PM25Sample } from './PM25HeatMapLayer';
+import PM25HeatMapLayer, { type Merra2GridSampler, type PM25Sample } from './PM25HeatMapLayer';
 import WashUPM25HeatMapLayer, { type WashUPM25Sample } from './WashUPM25HeatMapLayer';
 import WashuStationsLayer from './WashuStationsLayer';
 import Merra2Pm25GridLegend from './Merra2Pm25GridLegend';
@@ -107,6 +107,8 @@ interface MapVisualizationProps {
   onMerra2GridLoadingChange?: (loading: boolean) => void;
   onMerra2GridSourceChange?: (source: 'gesdisc' | 'sample', fallbackReason?: string) => void;
   merra2GridSource?: 'gesdisc' | 'sample' | null;
+  /** Dashboard 2: AQI category grid colors. Dashboard 1 default: continuous PM2.5 ramp. */
+  merra2GridColorMode?: 'continuous' | 'aqi';
   gridOpacity?: number;
   showAAQEForecast?: boolean;
   showOpenAq?: boolean;
@@ -129,6 +131,8 @@ interface MapVisualizationProps {
   onFireChartBoundsCommit?: (bounds: LatLonBounds) => void;
   merra2Stations?: MERRA2StationDailyRecord[];
   onMerra2StationClick?: (station: MERRA2StationDailyRecord) => void;
+  /** Dashboard 2: station tooltips include grid PM2.5 at same location. */
+  merra2EnhancedLegend?: boolean;
   aaqeForecastPoints?: AAQEForecastPoint[];
   aaqeForecastTimeCode?: string;
   aaqeForecastDate?: string;
@@ -165,6 +169,7 @@ const MapVisualization = ({
   onMerra2GridLoadingChange,
   onMerra2GridSourceChange,
   merra2GridSource = null,
+  merra2GridColorMode = 'continuous',
   gridOpacity = 0.65,
   showAAQEForecast = false,
   showOpenAq = false,
@@ -185,6 +190,7 @@ const MapVisualization = ({
   onFireChartBoundsCommit,
   merra2Stations = [],
   onMerra2StationClick,
+  merra2EnhancedLegend = false,
   aaqeForecastPoints = [],
   aaqeForecastTimeCode = '1330',
   aaqeForecastDate: _aaqeForecastDate,
@@ -208,6 +214,11 @@ const MapVisualization = ({
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [pm25Sample, setPm25Sample] = useState<PM25Sample | null>(null);
   const [washuSample, setWashuSample] = useState<WashUPM25Sample | null>(null);
+  const [merra2GridSampler, setMerra2GridSampler] = useState<Merra2GridSampler | null>(null);
+
+  const handleGridSamplerChange = useCallback((sampler: Merra2GridSampler | null) => {
+    setMerra2GridSampler(sampler);
+  }, []);
 
   const handlePm25Sample = (sample: PM25Sample | null) => {
     setPm25Sample(sample);
@@ -218,6 +229,7 @@ const MapVisualization = ({
     setCursorCoords(coords);
     if (!coords) {
       setPm25Sample(null);
+      onPm25Sample?.(null);
       setWashuSample(null);
     }
   };
@@ -295,7 +307,9 @@ const MapVisualization = ({
           date={merra2GridDate ?? selectedDate}
           hour={merra2GridHour}
           opacity={gridOpacity}
+          colorMode={merra2GridColorMode}
           onPm25Sample={handlePm25Sample}
+          onGridSamplerChange={merra2EnhancedLegend ? handleGridSamplerChange : undefined}
           onLoadingChange={onMerra2GridLoadingChange}
           onSourceChange={onMerra2GridSourceChange}
         />
@@ -326,19 +340,28 @@ const MapVisualization = ({
         <Merra2StationsLayer
           stations={merra2Stations}
           active
+          showGridCompare={merra2EnhancedLegend && showMerra2GridOverlay}
+          merra2GridHour={merra2GridHour}
+          sampleGridPm25={
+            merra2GridSampler
+              ? (lat, lon) => merra2GridSampler(lat, lon)?.value ?? null
+              : undefined
+          }
           onStationClick={(s) => {
             onMerra2StationClick?.(s);
-            handlePm25Sample({
-              lat: s.latitude,
-              lon: s.longitude,
-              value: s.pm25,
-              date: s.date,
-              hour: merra2GridHour,
-              min: 0,
-              max: 0,
-              units: 'µg/m³',
-              source: 'gesdisc',
-            });
+            if (!merra2EnhancedLegend) {
+              handlePm25Sample({
+                lat: s.latitude,
+                lon: s.longitude,
+                value: s.pm25,
+                date: s.date,
+                hour: merra2GridHour,
+                min: 0,
+                max: 0,
+                units: 'µg/m³',
+                source: 'gesdisc',
+              });
+            }
           }}
         />
       )}
@@ -475,12 +498,13 @@ const MapVisualization = ({
           Lat: {cursorCoords.lat.toFixed(4)}  Lon: {cursorCoords.lng.toFixed(4)}
         </div>
       )}
-      {((showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations)) ||
+      {((showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations) || (showWashU && showWashuStations)) ||
         (showMERRA2PM25 && showMerra2GridOverlay) ||
-        showWashU ||
+        (showWashU && showWashuGridOverlay) ||
         showAeronet) && (
         <div className="map-legends-stack">
-          {(showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations)) && (
+          {/* Station markers (AAQE / OpenAQ / MERRA2 / WashU) are colored by AQI category */}
+          {(showAAQEForecast || showOpenAq || (showMERRA2PM25 && showMerra2Stations) || (showWashU && showWashuStations)) && (
             <div className="aaqe-bottom-legend" aria-label="AQI category legend">
               <div className="aaqe-bottom-legend-row aaqe-bottom-legend-row--labels">
                 <span style={{ background: '#00e400' }}>Good</span>
@@ -501,10 +525,11 @@ const MapVisualization = ({
             </div>
           )}
           {showAeronet && <AeronetAodLegend />}
-          {showMERRA2PM25 && showMerra2GridOverlay && (
+          {showMERRA2PM25 && showMerra2GridOverlay && merra2GridColorMode === 'continuous' && (
             <Merra2Pm25GridLegend source={merra2GridSource} hour={merra2GridHour} sample={pm25Sample} />
           )}
-          {showWashU && (
+          {/* Continuous µg/m³ bar is only for the SatPM grid overlay, not station dots */}
+          {showWashU && showWashuGridOverlay && (
             <WashUPm25GridLegend
               source={washuGridSource}
               periodLabel={washuPeriodLabel ?? washuSample?.periodLabel}

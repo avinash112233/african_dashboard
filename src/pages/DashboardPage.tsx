@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import MapVisualization from '../components/maps/MapVisualization';
-import { getNOAA21VIIRS7DayFromWFS, peekFirePoints, prefetchFires, type FIRMSFirePoint } from '../services/firmsApi';
+import { getNOAA21VIIRS7DayFromWFS, peekFirePoints, ensureFiresPrefetched, subscribeFirePoints, type FIRMSFirePoint } from '../services/firmsApi';
 import {
   getAfricanAERONETSites,
   getAERONETData,
@@ -818,15 +818,18 @@ const DashboardPage = () => {
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
 
-  // Warm fire cache on dashboard open (silent background refresh).
+  // Warm fire cache on dashboard open; subscribe so in-flight App-level prefetch updates state too.
   useEffect(() => {
     let cancelled = false;
-    prefetchFires().then((pts) => {
-      if (!cancelled && pts.length > 0) {
-        setFirePoints((prev) => (prev.length > 0 ? prev : pts));
-      }
-    }).catch(() => {});
-    return () => { cancelled = true; };
+    const apply = (pts: FIRMSFirePoint[]) => {
+      if (!cancelled && pts.length > 0) setFirePoints(pts);
+    };
+    const unsub = subscribeFirePoints(apply);
+    void ensureFiresPrefetched().then(apply).catch(() => {});
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, []);
 
   // Spinner only when the fires layer is visible and we still have no points.
@@ -842,9 +845,15 @@ const DashboardPage = () => {
     let cancelled = false;
     setFireLoading(true);
     getNOAA21VIIRS7DayFromWFS()
-      .then((pts) => { if (!cancelled && pts.length > 0) setFirePoints(pts); })
-      .finally(() => { if (!cancelled) setFireLoading(false); });
-    return () => { cancelled = true; };
+      .then((pts) => {
+        if (!cancelled && pts.length > 0) setFirePoints(pts);
+      })
+      .finally(() => {
+        if (!cancelled) setFireLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [showFires, firePoints.length]);
 
   useEffect(() => {

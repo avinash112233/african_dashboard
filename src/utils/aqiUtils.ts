@@ -47,6 +47,49 @@ export function getAqiCategory(aqi: number | null): { label: string; color: stri
   return { label: 'Hazardous', color: '#7e0023' };
 }
 
+function hexColorToRgb(hex: string): [number, number, number] {
+  const normalized = hex.replace('#', '');
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
+  ];
+}
+
+/** Same EPA AQI category colors used for MERRA2 station markers. */
+export function pm25ToAqiCategoryRgb(pm25: number): [number, number, number] | null {
+  if (!Number.isFinite(pm25) || pm25 < 0) return null;
+  const aqi = calculateAQIFromPm25(pm25);
+  return hexColorToRgb(getAqiCategory(aqi).color);
+}
+
+export const AQI_CATEGORY_LEGEND_ROWS = PM25_AQI_BREAKPOINTS.map((bp) => ({
+  label: bp.label,
+  color: bp.color,
+  shortLabel:
+    bp.label === 'Unhealthy for Sensitive Groups'
+      ? 'USG'
+      : bp.label === 'Very Unhealthy'
+        ? 'Very unh.'
+        : bp.label,
+  aqiRange:
+    bp.iHigh >= 500
+      ? `${bp.iLow}+`
+      : bp.iLow === 0
+        ? `0–${bp.iHigh}`
+        : `${bp.iLow}–${bp.iHigh}`,
+  pm25Range:
+    bp.cHigh >= 325
+      ? `≥${bp.cLow} µg/m³`
+      : `${bp.cLow}–${bp.cHigh} µg/m³`,
+  pm25RangeShort:
+    bp.cHigh >= 325
+      ? `≥${Math.round(bp.cLow)}`
+      : bp.cLow === 0
+        ? `0–${Math.round(bp.cHigh)}`
+        : `${bp.cLow}–${Math.round(bp.cHigh)}`,
+}));
+
 /** Text on AQI-colored bars (matches NASA aqforecast / aeronet_aq `setTextColor`). */
 export function getAqiBarLabelColor(aqi: number): string {
   if (aqi <= 50) return '#ffffff';

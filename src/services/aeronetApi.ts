@@ -42,6 +42,7 @@ const CACHE_SITES_TTL_MS  = 24 * 60 * 60 * 1000;
 const CACHE_AFRICA_TTL_MS = 30 * 60 * 1000;
 const LS_SITES_KEY   = 'aqf_aeronet_sites_v2';
 const LS_AFRICA_KEY  = 'aqf_aeronet_africa_v1';
+const LS_SITE_DATA_PREFIX = 'aqf_aeronet_site_v1_';
 
 /** NASA extended list is intermittently empty (header only); v3 list is reliable. */
 const AERONET_SITE_LIST_URLS = [
@@ -89,14 +90,111 @@ function lsWrite<T>(key: string, data: T): void {
   } catch { /* quota exceeded */ }
 }
 
-async function fetchWithTimeout(url: string, ms = 10_000): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+function lsReadStale<T>(key: string): T | null {
   try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const entry: CacheEntry<T> = JSON.parse(raw);
+    return entry.data ?? null;
+  } catch {
+    return null;
   }
+}
+
+function toDateKey(raw: string): string {
+  const s = raw?.trim() ?? '';
+  const dmy = s.match(/^(\d{1,2})[:\/-](\d{1,2})[:\/-](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return s;
+}
+
+function filterPointsInRange(
+  points: AERONETDataPoint[],
+  startDate: string,
+  endDate: string
+): AERONETDataPoint[] {
+  return points.filter((pt) => {
+    const key = toDateKey(pt.date);
+    return key >= startDate && key <= endDate;
+  });
+}
+
+/** Merge any cached site-series entries (any date span) that overlap the requested range. */
+function findOverlappingSiteSeriesCache(
+  siteIds: string[],
+  startDate: string,
+  endDate: string,
+  aodVersion: AERONETAODVersion
+): AERONETDataPoint[] {
+  const siteSet = new Set(siteIds.filter(Boolean));
+  const merged = new Map<string, AERONETDataPoint>();
+
+  for (const [key, entry] of cacheSiteData.entries()) {
+    const [site, , , version] = key.split('|');
+    if (!siteSet.has(site) || Number(version) !== aodVersion) continue;
+    for (const pt of filterPointsInRange(entry.data, startDate, endDate)) {
+      merged.set(`${toDateKey(pt.date)}|${pt.time ?? ''}`, pt);
+    }
+  }
+
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const storageKey = localStorage.key(i);
+      if (!storageKey?.startsWith(LS_SITE_DATA_PREFIX)) continue;
+      const payload = storageKey.slice(LS_SITE_DATA_PREFIX.length);
+      const [site, , , version] = payload.split('|');
+      if (!siteSet.has(site) || Number(version) !== aodVersion) continue;
+      const stale = lsReadStale<AERONETDataPoint[]>(storageKey);
+      if (!stale?.length) continue;
+      for (const pt of filterPointsInRange(stale, startDate, endDate)) {
+        merged.set(`${toDateKey(pt.date)}|${pt.time ?? ''}`, pt);
+      }
+    }
+  } catch {
+    /* localStorage unavailable */
+  }
+
+  return [...merged.values()].sort((a, b) => toDateKey(a.date).localeCompare(toDateKey(b.date)));
+}
+
+function staleSiteSeriesFallback(
+  siteIds: string[],
+  startDate: string,
+  endDate: string,
+  aodVersion: AERONETAODVersion,
+  errorPrefix: string
+): AeronetSeriesResult | null {
+  const points = findOverlappingSiteSeriesCache(siteIds, startDate, endDate, aodVersion);
+  if (points.length === 0) return null;
+  return {
+    points,
+    fromCache: true,
+    error: `${errorPrefix} — showing cached measurements for overlapping dates.`,
+  };
+}
+
+async function fetchWithTimeout(url: string, ms = 20_000, retries = 2): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 // Parses aeronet_locations_extended_v3.txt (tab- or comma-separated, flexible headers).
@@ -205,74 +303,207 @@ export async function getAfricanAERONETSites(): Promise<AERONETSite[]> {
   }
 }
 
+export interface AeronetSeriesResult {
+  points: AERONETDataPoint[];
+  error?: string;
+  fromCache?: boolean;
+}
+
+function humanizeAeronetError(raw: string, status?: number): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes('fetch failed') || lower.includes('econnrefused') || lower.includes('network')) {
+    return 'NASA AERONET is temporarily unreachable. Map station colors may still show cached data for the selected day, but time-series plots need a live connection. Ensure `npm run backend` is running and try again shortly.';
+  }
+  if (status && status >= 500) {
+    return `AERONET server error (${status}). Try again later or pick an earlier date range.`;
+  }
+  return raw;
+}
+
+function parseAeronetDataText(text: string): AERONETDataPoint[] {
+  const lines = text.split('\n').filter((l) => l.trim());
+  if (lines.length < 2) return [];
+
+  let headerLineIdx = 0;
+  for (let h = 0; h < Math.min(10, lines.length); h++) {
+    const row = lines[h];
+    if (
+      row.includes('Date') &&
+      !row.includes('End_Date') &&
+      (/aod|aot/i.test(row) && /500|675|870|1020/.test(row) || row.split(',').length > 5)
+    ) {
+      headerLineIdx = h;
+      break;
+    }
+  }
+  const colsArr = lines[headerLineIdx].split(',');
+  const dateIdx = colsArr.findIndex((c) => c.includes('Date') && !c.includes('End'));
+  const timeIdx = colsArr.findIndex((c) => c.toLowerCase().includes('time') && !c.includes('datetime'));
+  const doyIdx = colsArr.findIndex((c) => /day_of_year|dayofyear/i.test(c));
+  const findAod = (w: string) => colsArr.findIndex((c) => /aod|aot/i.test(c) && c.includes(w));
+  const aod500Idx = findAod('500');
+  const aod675Idx = findAod('675');
+  const aod870Idx = findAod('870');
+  const aod1020Idx = findAod('1020');
+
+  const points: AERONETDataPoint[] = [];
+  for (let i = headerLineIdx + 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const date = dateIdx >= 0 ? cols[dateIdx]?.trim() : cols[0]?.trim() || '';
+    if (!date || date.startsWith(';') || date === 'AERONET') continue;
+    const toAod = (v: number | undefined) => (v == null || isNaN(v) || v < -900 ? undefined : v);
+    points.push({
+      date,
+      time: timeIdx >= 0 ? cols[timeIdx]?.trim() : undefined,
+      dayOfYear: doyIdx >= 0 ? parseInt(cols[doyIdx], 10) : undefined,
+      AOD_500nm: toAod(aod500Idx >= 0 ? parseFloat(cols[aod500Idx]) : undefined),
+      AOD_675nm: toAod(aod675Idx >= 0 ? parseFloat(cols[aod675Idx]) : undefined),
+      AOD_870nm: toAod(aod870Idx >= 0 ? parseFloat(cols[aod870Idx]) : undefined),
+      AOD_1020nm: toAod(aod1020Idx >= 0 ? parseFloat(cols[aod1020Idx]) : undefined),
+    });
+  }
+  return points;
+}
+
+function buildAeronetSeriesUrl(
+  site: string,
+  startDate: string,
+  endDate: string,
+  aodVersion: AERONETAODVersion
+): string {
+  const [y1, m1, d1] = startDate.split('-').map(Number);
+  const [y2, m2, d2] = endDate.split('-').map(Number);
+  const aodParamKey = getAodVersionParam(aodVersion);
+  const params = new URLSearchParams({
+    site,
+    year: String(y1),
+    month: String(m1).padStart(2, '0'),
+    day: String(d1).padStart(2, '0'),
+    year2: String(y2),
+    month2: String(m2).padStart(2, '0'),
+    day2: String(d2).padStart(2, '0'),
+    [aodParamKey]: '1',
+    AVG: '20',
+    if_no_html: '1',
+  });
+  return `${API_BASE}/cgi-bin/print_web_data_v3?${params}`;
+}
+
+export function aeronetSiteQueryCandidates(site: AERONETSite): string[] {
+  const ids = [site.site, site.name].filter((v): v is string => Boolean(v && v.trim()));
+  return [...new Set(ids)];
+}
+
+export async function getAERONETDataWithMeta(
+  site: string,
+  startDate: string,
+  endDate: string,
+  aodVersion: AERONETAODVersion = 1.5
+): Promise<AeronetSeriesResult> {
+  const key = `${site}|${startDate}|${endDate}|${aodVersion}`;
+  const lsKey = `${LS_SITE_DATA_PREFIX}${key}`;
+
+  const cached = cacheSiteData.get(key);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { points: cached.data };
+  }
+
+  const lsFresh = lsRead<AERONETDataPoint[]>(lsKey, CACHE_TTL_MS);
+  if (lsFresh) {
+    cacheSiteData.set(key, { data: lsFresh, ts: Date.now() });
+    return { points: lsFresh };
+  }
+
+  try {
+    const res = await fetchWithTimeout(buildAeronetSeriesUrl(site, startDate, endDate, aodVersion));
+    if (!res.ok) {
+      let message = `AERONET request failed (${res.status})`;
+      try {
+        const errJson = (await res.json()) as { error?: string };
+        if (errJson?.error) message = errJson.error;
+      } catch {
+        /* not JSON */
+      }
+      const stale = lsReadStale<AERONETDataPoint[]>(lsKey);
+      if (stale && stale.length > 0) {
+        return { points: stale, fromCache: true, error: `${message} — showing cached data.` };
+      }
+      const overlap = staleSiteSeriesFallback([site], startDate, endDate, aodVersion, message);
+      if (overlap) return overlap;
+      return { points: [], error: humanizeAeronetError(message, res.status) };
+    }
+    const text = await res.text();
+    const points = parseAeronetDataText(text);
+    pruneCache(cacheSiteData, MAX_SITE_CACHE);
+    cacheSiteData.set(key, { data: points, ts: Date.now() });
+    lsWrite(lsKey, points);
+    return { points };
+  } catch (err) {
+    console.error('[AERONET] getAERONETData error:', err);
+    const stale = lsReadStale<AERONETDataPoint[]>(lsKey);
+    if (stale && stale.length > 0) {
+      return {
+        points: stale,
+        fromCache: true,
+        error: 'NASA AERONET unreachable — showing cached measurements.',
+      };
+    }
+    const overlap = staleSiteSeriesFallback(
+      [site],
+      startDate,
+      endDate,
+      aodVersion,
+      'NASA AERONET unreachable'
+    );
+    if (overlap) return overlap;
+    const message =
+      err instanceof Error && err.name === 'AbortError'
+        ? 'AERONET request timed out. Check that the backend is running (`npm run backend`).'
+        : err instanceof Error
+          ? err.message
+          : 'AERONET request failed';
+    return { points: [], error: humanizeAeronetError(message) };
+  }
+}
+
+export async function fetchAeronetSiteSeries(
+  site: AERONETSite,
+  startDate: string,
+  endDate: string,
+  aodVersion: AERONETAODVersion = 1.5
+): Promise<AeronetSeriesResult> {
+  const candidates = aeronetSiteQueryCandidates(site);
+  let lastResult: AeronetSeriesResult = { points: [], error: 'Invalid AERONET site id.' };
+
+  for (const querySite of candidates) {
+    const result = await getAERONETDataWithMeta(querySite, startDate, endDate, aodVersion);
+    if (result.points.length > 0) return result;
+    lastResult = result;
+  }
+
+  const overlap = staleSiteSeriesFallback(
+    candidates,
+    startDate,
+    endDate,
+    aodVersion,
+    lastResult.error ?? 'AERONET unavailable'
+  );
+  if (overlap) return overlap;
+
+  if (!lastResult.error) {
+    lastResult.error = 'No AOD measurements in this date range for this site.';
+  }
+  return lastResult;
+}
+
 export async function getAERONETData(
   site: string,
   startDate: string,
   endDate: string,
   aodVersion: AERONETAODVersion = 1.5
 ): Promise<AERONETDataPoint[]> {
-  const key = `${site}|${startDate}|${endDate}|${aodVersion}`;
-  const cached = cacheSiteData.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
-
-  try {
-    const [y1, m1, d1] = startDate.split('-').map(Number);
-    const [y2, m2, d2] = endDate.split('-').map(Number);
-    const aodParamKey = getAodVersionParam(aodVersion);
-    const params = new URLSearchParams({
-      site,
-      year: String(y1), month: String(m1).padStart(2, '0'), day: String(d1).padStart(2, '0'),
-      year2: String(y2), month2: String(m2).padStart(2, '0'), day2: String(d2).padStart(2, '0'),
-      [aodParamKey]: '1',
-      AVG: '20',
-      if_no_html: '1',
-    });
-    const res = await fetchWithTimeout(`${API_BASE}/cgi-bin/print_web_data_v3?${params}`, 10_000);
-    if (!res.ok) return [];
-    const text = await res.text();
-    const lines = text.split('\n').filter((l) => l.trim());
-    if (lines.length < 2) return [];
-
-    let headerLineIdx = 0;
-    for (let h = 0; h < Math.min(10, lines.length); h++) {
-      const row = lines[h];
-      if (row.includes('Date') && !row.includes('End_Date') &&
-          (/aod|aot/i.test(row) && /500|675|870|1020/.test(row) || row.split(',').length > 5)) {
-        headerLineIdx = h;
-        break;
-      }
-    }
-    const colsArr = lines[headerLineIdx].split(',');
-    const dateIdx  = colsArr.findIndex((c) => c.includes('Date') && !c.includes('End'));
-    const timeIdx  = colsArr.findIndex((c) => c.toLowerCase().includes('time') && !c.includes('datetime'));
-    const doyIdx   = colsArr.findIndex((c) => /day_of_year|dayofyear/i.test(c));
-    const findAod  = (w: string) => colsArr.findIndex((c) => /aod|aot/i.test(c) && c.includes(w));
-    const aod500Idx = findAod('500'), aod675Idx = findAod('675');
-    const aod870Idx = findAod('870'), aod1020Idx = findAod('1020');
-
-    const points: AERONETDataPoint[] = [];
-    for (let i = headerLineIdx + 1; i < lines.length; i++) {
-      const cols = lines[i].split(',');
-      const date = dateIdx >= 0 ? cols[dateIdx]?.trim() : cols[0]?.trim() || '';
-      if (!date || date.startsWith(';') || date === 'AERONET') continue;
-      const toAod = (v: number | undefined) => v == null || isNaN(v) || v < -900 ? undefined : v;
-      points.push({
-        date,
-        time: timeIdx >= 0 ? cols[timeIdx]?.trim() : undefined,
-        dayOfYear: doyIdx >= 0 ? parseInt(cols[doyIdx], 10) : undefined,
-        AOD_500nm:  toAod(aod500Idx  >= 0 ? parseFloat(cols[aod500Idx])  : undefined),
-        AOD_675nm:  toAod(aod675Idx  >= 0 ? parseFloat(cols[aod675Idx])  : undefined),
-        AOD_870nm:  toAod(aod870Idx  >= 0 ? parseFloat(cols[aod870Idx])  : undefined),
-        AOD_1020nm: toAod(aod1020Idx >= 0 ? parseFloat(cols[aod1020Idx]) : undefined),
-      });
-    }
-    pruneCache(cacheSiteData, MAX_SITE_CACHE);
-    cacheSiteData.set(key, { data: points, ts: Date.now() });
-    return points;
-  } catch (err) {
-    console.error('[AERONET] getAERONETData error:', err);
-    return [];
-  }
+  const result = await getAERONETDataWithMeta(site, startDate, endDate, aodVersion);
+  return result.points;
 }
 
 /**
@@ -308,8 +539,11 @@ export async function getAERONETDataAfrica(
       AVG: '20',
       if_no_html: '1',
     });
-    const res = await fetch(`${API_BASE}/cgi-bin/print_web_data_v3?${params}`);
-    if (!res.ok) return map;
+    const res = await fetchWithTimeout(`${API_BASE}/cgi-bin/print_web_data_v3?${params}`, 20_000);
+    if (!res.ok) {
+      const staleAfrica = lsReadStale<SiteAODMap>(lsKey);
+      return staleAfrica ?? map;
+    }
     const lines = (await res.text()).split('\n').filter((l) => l.trim());
     if (lines.length < 2) return map;
 

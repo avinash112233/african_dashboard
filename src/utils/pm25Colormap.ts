@@ -1,3 +1,5 @@
+import { pm25ToAqiCategoryRgb } from './aqiUtils';
+
 /**
  * PM2.5 colormap similar to Matplotlib "Reds" / UMBC-style daily maps:
  * near-white at low µg/m³ → deep maroon at high values.
@@ -210,6 +212,39 @@ export function renderPm25GridNativeCells(
       const v = values[row * width + col];
       if (v == null || v === noDataValue || Number.isNaN(v)) continue;
       const [r, g, b] = pm25ToRgb(v, vmin, vmax);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(col * pxPerLonCell, row * pxPerLatCell, pxPerLonCell, pxPerLatCell);
+    }
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+/** Paint native grid cells using EPA AQI category colors (matches MERRA2 station markers). */
+export function renderPm25GridAqiCells(
+  grid: {
+    values: number[];
+    width: number;
+    height: number;
+    noDataValue: number;
+  },
+  pxPerLonCell = 5,
+  pxPerLatCell = 4
+): string {
+  const { width, height, values, noDataValue } = grid;
+  const canvas = document.createElement('canvas');
+  canvas.width = width * pxPerLonCell;
+  canvas.height = height * pxPerLatCell;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  for (let row = 0; row < height; row++) {
+    for (let col = 0; col < width; col++) {
+      const v = values[row * width + col];
+      if (v == null || v === noDataValue || Number.isNaN(v)) continue;
+      const rgb = pm25ToAqiCategoryRgb(v);
+      if (!rgb) continue;
+      const [r, g, b] = rgb;
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(col * pxPerLonCell, row * pxPerLatCell, pxPerLonCell, pxPerLatCell);
     }

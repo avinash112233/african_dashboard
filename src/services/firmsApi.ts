@@ -9,12 +9,14 @@ const API_BASE  = '/api/firms';
 
 const WFS_CACHE_TTL_MS = 15 * 60 * 1000;
 const SESSION_CACHE_KEY = 'aaqe-firms7day-v1';
+const LOCAL_CACHE_KEY = 'aaqe-firms7day-v1-ls';
 let wfsCache: { data: FIRMSFirePoint[]; ts: number } | null = null;
 let wfsInflight: Promise<FIRMSFirePoint[]> | null = null;
+const fireReadyListeners = new Set<(points: FIRMSFirePoint[]) => void>();
 
-function readSessionFireCache(): FIRMSFirePoint[] | null {
+function readStoredFireCache(storage: Storage, key: string): FIRMSFirePoint[] | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    const raw = storage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { ts: number; data: FIRMSFirePoint[] };
     if (!parsed?.data?.length || Date.now() - parsed.ts > WFS_CACHE_TTL_MS) return null;
@@ -24,24 +26,80 @@ function readSessionFireCache(): FIRMSFirePoint[] | null {
   }
 }
 
-function writeSessionFireCache(data: FIRMSFirePoint[]) {
+function writeStoredFireCache(storage: Storage, key: string, data: FIRMSFirePoint[]) {
   if (data.length === 0) return;
   try {
-    sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+    storage.setItem(key, JSON.stringify({ ts: Date.now(), data }));
   } catch {
     /* quota / private mode */
   }
 }
 
-/** Instant read of cached fire points (memory or session) — no network. */
-export function peekFirePoints(): FIRMSFirePoint[] | null {
-  if (wfsCache && Date.now() - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
-  return readSessionFireCache();
+function readSessionFireCache(): FIRMSFirePoint[] | null {
+  return readStoredFireCache(sessionStorage, SESSION_CACHE_KEY);
 }
 
-/** Warm the fire cache as soon as the dashboard opens. */
+function readLocalFireCache(): FIRMSFirePoint[] | null {
+  return readStoredFireCache(localStorage, LOCAL_CACHE_KEY);
+}
+
+function writeSessionFireCache(data: FIRMSFirePoint[]) {
+  writeStoredFireCache(sessionStorage, SESSION_CACHE_KEY, data);
+  writeStoredFireCache(localStorage, LOCAL_CACHE_KEY, data);
+}
+
+function notifyFireReady(points: FIRMSFirePoint[]) {
+  if (points.length === 0) return;
+  for (const listener of fireReadyListeners) listener(points);
+}
+
+export function subscribeFirePoints(listener: (points: FIRMSFirePoint[]) => void): () => void {
+  fireReadyListeners.add(listener);
+  const cached = peekFirePoints();
+  if (cached?.length) listener(cached);
+  return () => {
+    fireReadyListeners.delete(listener);
+  };
+}
+
+/** Instant read of cached fire points (memory → session → localStorage) — no network. */
+export function peekFirePoints(): FIRMSFirePoint[] | null {
+  if (wfsCache && Date.now() - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
+  const sessionHit = readSessionFireCache();
+  if (sessionHit) {
+    wfsCache = { data: sessionHit, ts: Date.now() };
+    return sessionHit;
+  }
+  const localHit = readLocalFireCache();
+  if (localHit) {
+    wfsCache = { data: localHit, ts: Date.now() };
+    return localHit;
+  }
+  return null;
+}
+
+function commitFireCache(data: FIRMSFirePoint[]): FIRMSFirePoint[] {
+  if (data.length > 0) {
+    wfsCache = { data, ts: Date.now() };
+    writeSessionFireCache(data);
+    notifyFireReady(data);
+  }
+  return data;
+}
+
+/** Warm the fire cache as soon as the app or dashboard opens. */
 export function prefetchFires(): Promise<FIRMSFirePoint[]> {
   return getNOAA21VIIRS7DayFromWFS();
+}
+
+/** Idempotent — safe to call from App mount and dashboard hooks. */
+export function ensureFiresPrefetched(): Promise<FIRMSFirePoint[]> {
+  const cached = peekFirePoints();
+  if (cached?.length) {
+    void getNOAA21VIIRS7DayFromWFS();
+    return Promise.resolve(cached);
+  }
+  return prefetchFires();
 }
 
 export interface FIRMSFirePoint {
@@ -221,31 +279,21 @@ export async function getNOAA21VIIRS7DayFromWFS(): Promise<FIRMSFirePoint[]> {
   if (wfsCache && now - wfsCache.ts < WFS_CACHE_TTL_MS) return wfsCache.data;
 
   const sessionHit = readSessionFireCache();
-  if (sessionHit) {
+  const storedHit = sessionHit ?? readLocalFireCache();
+  if (storedHit) {
+    wfsCache = { data: storedHit, ts: Date.now() };
     if (!wfsInflight) {
       wfsInflight = fetchNOAA21VIIRS7DayFromWFS()
-        .then((data) => {
-          if (data.length > 0) {
-            wfsCache = { data, ts: Date.now() };
-            writeSessionFireCache(data);
-          }
-          return data;
-        })
+        .then(commitFireCache)
         .finally(() => { wfsInflight = null; });
     }
-    return sessionHit;
+    return storedHit;
   }
 
   if (wfsInflight) return wfsInflight;
 
   wfsInflight = fetchNOAA21VIIRS7DayFromWFS()
-    .then((data) => {
-      if (data.length > 0) {
-        wfsCache = { data, ts: Date.now() };
-        writeSessionFireCache(data);
-      }
-      return data;
-    })
+    .then(commitFireCache)
     .finally(() => { wfsInflight = null; });
   return wfsInflight;
 }
