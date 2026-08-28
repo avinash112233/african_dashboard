@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import dayjs from 'dayjs';
 import MapVisualization from '../components/maps/MapVisualization';
 import type { PM25Sample } from '../components/maps/PM25HeatMapLayer';
@@ -288,7 +287,7 @@ const DashboardPageV2 = () => {
           </div>
         </div>
 
-        <div className="row g-3 align-items-end">
+        <div className="row g-3 align-items-end dashboard-v2-filter-row">
           <div className="col-12">
             <label className="form-label">Analysis workflow</label>
             <div className="analysis-tabs" role="group" aria-label="Analysis workflow">
@@ -309,7 +308,7 @@ const DashboardPageV2 = () => {
             </div>
           </div>
 
-          <div className="col-md-3">
+          <div className="col-md-3 dashboard-v2-filter-field">
             <label className="form-label" htmlFor="v2-country">
               Country
             </label>
@@ -327,7 +326,7 @@ const DashboardPageV2 = () => {
             </select>
           </div>
 
-          <div className="col-md-3">
+          <div className="col-md-3 dashboard-v2-filter-field">
             <label className="form-label" htmlFor="v2-city">
               City
             </label>
@@ -345,7 +344,7 @@ const DashboardPageV2 = () => {
             </select>
           </div>
 
-          <div className="col-md-3">
+          <div className="col-md-3 dashboard-v2-filter-field">
             <label className="form-label" htmlFor="v2-station-network">
               Station network
             </label>
@@ -363,15 +362,25 @@ const DashboardPageV2 = () => {
             </select>
           </div>
 
-          <div className="col-md-3">
-            <label className="form-label">Map / valid date</label>
-            <DatePicker
-              value={data.selectedDate}
-              onChange={(d) => d && data.setMapValidDate(d)}
-              maxDate={dayjs()}
-              slotProps={{ textField: { size: 'small', fullWidth: true, className: 'form-control' } }}
+          <div className="col-md-3 dashboard-v2-filter-field">
+            <label className="form-label" htmlFor="v2-map-valid-date">
+              Map / valid date
+            </label>
+            <input
+              id="v2-map-valid-date"
+              type="date"
+              className="form-control dashboard-v2-date-input"
+              value={data.effectiveSelectedDateStr}
+              max={dayjs().format('YYYY-MM-DD')}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value) data.setMapValidDate(dayjs(value));
+              }}
             />
-            <div className="mini-note mt-1">
+          </div>
+
+          <div className="col-12 col-md-3 offset-md-9 dashboard-v2-map-date-note-wrap">
+            <div className="mini-note dashboard-v2-map-date-note">
               Map layers and daily products reload for{' '}
               {formatDateMonthDayYear(data.effectiveSelectedDateStr)}.
             </div>

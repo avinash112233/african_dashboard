@@ -594,6 +594,45 @@
   font-weight: 800;
   color: #4d5d6e;
   margin-bottom: 5px;
+  min-height: 18px;
+  display: block;
+}
+
+.dashboard-v2-page .dashboard-v2-filter-row {
+  align-items: flex-end;
+}
+
+.dashboard-v2-page .dashboard-v2-filter-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-v2-page .dashboard-v2-filter-field .form-select,
+.dashboard-v2-page .dashboard-v2-filter-field .form-control {
+  width: 100%;
+}
+
+.dashboard-v2-page .dashboard-v2-date-input {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.dashboard-v2-page .dashboard-v2-date-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+  margin-left: 4px;
+}
+
+.dashboard-v2-page .dashboard-v2-date-input:focus::-webkit-calendar-picker-indicator {
+  opacity: 0.85;
+}
+
+.dashboard-v2-page .dashboard-v2-map-date-note-wrap {
+  margin-top: -4px;
+}
+
+.dashboard-v2-page .dashboard-v2-map-date-note {
+  padding-left: 0;
 }
 
 .dashboard-v2-page .form-select,
@@ -603,6 +642,15 @@
   font-size: 13px;
   min-height: 39px;
   background: #fbfdff;
+  color: #1f2937;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.dashboard-v2-page .dashboard-v2-filter-field .form-select,
+.dashboard-v2-page .dashboard-v2-filter-field .dashboard-v2-date-input {
+  height: 39px;
+  padding: 8px 12px;
 }
 
 .dashboard-v2-page .form-select:focus,

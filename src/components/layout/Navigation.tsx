@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { isDashboardV2Enabled } from '../../utils/featureFlags';
+import { isDashboardV2Enabled, isDashboardV2Only } from '../../utils/featureFlags';
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: 'bi-speedometer2' },
@@ -12,10 +12,12 @@ const NAV_ITEMS = [
 
 const Navigation = () => {
   const [menuOpen, setMenuOpen] = useState(false);
-  const navItems = useMemo(
-    () => NAV_ITEMS.filter((item) => isDashboardV2Enabled() || item.to !== '/dashboard-2'),
-    []
-  );
+  const navItems = useMemo(() => {
+    if (isDashboardV2Only()) {
+      return NAV_ITEMS.filter((item) => item.to === '/dashboard' || item.to === '/about' || item.to === '/team' || item.to === '/publications');
+    }
+    return NAV_ITEMS.filter((item) => isDashboardV2Enabled() || item.to !== '/dashboard-2');
+  }, []);
 
   return (
     <header className="aaqe-hero-header">

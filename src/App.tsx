@@ -9,7 +9,7 @@ import './App.css';
 import Navigation from './components/layout/Navigation';
 import ErrorBoundary from './components/ErrorBoundary';
 import AboutPage from './pages/AboutPage';
-import { isDashboardV2Enabled } from './utils/featureFlags';
+import { isDashboardV2Enabled, isDashboardV2Only } from './utils/featureFlags';
 import { ensureFiresPrefetched } from './services/firmsApi';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -23,10 +23,19 @@ const PageFallback = () => (
 
 function App() {
   const dashboardV2Enabled = isDashboardV2Enabled();
+  const dashboardV2Only = isDashboardV2Only();
 
   useEffect(() => {
     void ensureFiresPrefetched();
   }, []);
+
+  const dashboardElement = (
+    <ErrorBoundary>
+      <Suspense fallback={<PageFallback />}>
+        {dashboardV2Only ? <DashboardPageV2 /> : <DashboardPage />}
+      </Suspense>
+    </ErrorBoundary>
+  );
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -37,17 +46,8 @@ function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/home" element={<Navigate to="/about" replace />} />
-            <Route
-              path="/dashboard"
-              element={
-                <ErrorBoundary>
-                  <Suspense fallback={<PageFallback />}>
-                    <DashboardPage />
-                  </Suspense>
-                </ErrorBoundary>
-              }
-            />
-            {dashboardV2Enabled ? (
+            <Route path="/dashboard" element={dashboardElement} />
+            {dashboardV2Enabled && !dashboardV2Only ? (
               <Route
                 path="/dashboard-2"
                 element={
