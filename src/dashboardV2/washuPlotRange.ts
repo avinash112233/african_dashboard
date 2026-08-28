@@ -87,17 +87,46 @@ export function isWashuSeriesRangePending(draft: WashuMonthRange, applied: Washu
 }
 
 export function normalizeWashuMonthRange(range: WashuMonthRange): WashuMonthRange {
-  const start = dayjs(`${range.startYear}-${String(range.startMonth).padStart(2, '0')}-01`);
+  const archiveMin = dayjs(`${WASHU_ARCHIVE_MIN}-01`);
+  const archiveMax = dayjs(`${WASHU_ARCHIVE_MAX}-01`);
+
+  let start = dayjs(`${range.startYear}-${String(range.startMonth).padStart(2, '0')}-01`);
   let end = dayjs(`${range.endYear}-${String(range.endMonth).padStart(2, '0')}-01`);
-  if (end.isBefore(start, 'month')) {
-    end = start;
-  }
+
+  if (start.isBefore(archiveMin, 'month')) start = archiveMin;
+  if (end.isAfter(archiveMax, 'month')) end = archiveMax;
+  if (end.isBefore(start, 'month')) end = start;
+
   return {
     startYear: start.year(),
     startMonth: start.month() + 1,
     endYear: end.year(),
     endMonth: end.month() + 1,
   };
+}
+
+/** Clamp an ISO date (YYYY-MM-DD) into the WashU SatPM archive window. */
+export function clampIsoDateToWashuArchive(dateStr: string): string {
+  const parsed = dayjs(dateStr.slice(0, 10), 'YYYY-MM-DD', true);
+  if (!parsed.isValid()) return `${WASHU_ARCHIVE_MAX}-01`;
+  const min = dayjs(`${WASHU_ARCHIVE_MIN}-01`);
+  const max = dayjs(`${WASHU_ARCHIVE_MAX}-01`).endOf('month');
+  if (parsed.isBefore(min, 'day')) return min.format('YYYY-MM-DD');
+  if (parsed.isAfter(max, 'day')) return max.format('YYYY-MM-DD');
+  return parsed.format('YYYY-MM-DD');
+}
+
+export function washuRangeToIsoDates({
+  startYear,
+  startMonth,
+  endYear,
+  endMonth,
+}: WashuMonthRange): { startDate: string; endDate: string } {
+  const startDate = `${startYear}-${String(startMonth).padStart(2, '0')}-01`;
+  const endDate = dayjs(`${endYear}-${String(endMonth).padStart(2, '0')}-01`)
+    .endOf('month')
+    .format('YYYY-MM-DD');
+  return { startDate, endDate };
 }
 
 export function matchWashuMonthPreset(

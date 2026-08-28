@@ -24,7 +24,7 @@ import {
   type OpenAqStationRecord,
   type OpenAqTimeseriesPoint,
 } from '../services/openaqApi';
-import { fetchWashUTimeseries, type WashUTimeseriesPoint } from '../services/washuApi';
+import { fetchWashUTimeseries, getWashUStationTimeseries, defaultWashuStationSeriesRange, washuStationTimeseriesBounds, type WashUTimeseriesPoint, type WashUStationDailyRecord, type WashUStationTimeseriesPoint } from '../services/washuApi';
 import {
   getAaqeDisplayValues,
   getAaqeForecastDaysAfterSelected,
@@ -34,10 +34,15 @@ import {
 import { calculateAQIFromPm25, getAqiCategory } from '../utils/aqiUtils';
 import {
   anchorFromAaqe,
+  anchorFromAeronet,
   anchorFromFire,
   anchorFromMerra2,
+  anchorFromOpenAq,
+  anchorFromWashuLocation,
+  anchorFromWashuStation,
 } from '../analysis/locationAnchor';
 import type { AnalysisLocationContext } from '../analysis/types';
+import { resolveColocationLinks } from '../analysis/resolveColocation';
 import { computeDailyMeanAOD } from '../utils/aodUtils';
 import { formatDateMonthDayYear } from '../utils/dateFormat';
 import type { FireAnalysisRange, SelectedAAQEData, SelectedFireData } from './types';
@@ -45,6 +50,7 @@ import type { DashboardV2LayerKey } from './config';
 import {
   getDefaultWashuSeriesRange,
   getWashuAnchorMonth,
+  normalizeWashuMonthRange,
   type WashuMonthRange,
 } from './washuPlotRange';
 
@@ -62,6 +68,8 @@ export interface DashboardV2LayerFeaturesInput {
   merra2Loading: boolean;
   merra2DataDate: string | null;
   merra2Stations: MERRA2StationDailyRecord[];
+  washuStations: WashUStationDailyRecord[];
+  washuDataDate: string | null;
   firePoints: FIRMSFirePoint[];
   openAqMapMode: OpenAqMapMode;
   openAqMonitorsOnly: boolean;
@@ -97,6 +105,8 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     merra2Loading,
     merra2DataDate,
     merra2Stations,
+    washuStations,
+    washuDataDate,
     firePoints,
     openAqMapMode,
     openAqMonitorsOnly: _openAqMonitorsOnly,
@@ -123,11 +133,12 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   );
 
   const applyWashuMonthRange = useCallback((range: WashuMonthRange) => {
-    setWashuSeriesStartYear(range.startYear);
-    setWashuSeriesStartMonth(range.startMonth);
-    setWashuSeriesEndYear(range.endYear);
-    setWashuSeriesEndMonth(range.endMonth);
-    setWashuAppliedSeriesRange(range);
+    const normalized = normalizeWashuMonthRange(range);
+    setWashuSeriesStartYear(normalized.startYear);
+    setWashuSeriesStartMonth(normalized.startMonth);
+    setWashuSeriesEndYear(normalized.endYear);
+    setWashuSeriesEndMonth(normalized.endMonth);
+    setWashuAppliedSeriesRange(normalized);
   }, []);
 
   const [selectedSite, setSelectedSite] = useState<AERONETSite | null>(null);
@@ -165,9 +176,21 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     end: dayjs().format('YYYY-MM-DD'),
   }));
 
+  const [anchorMerra2Series, setAnchorMerra2Series] = useState<MERRA2StationTimeseriesPoint[]>([]);
+  const [anchorOpenAqSeries, setAnchorOpenAqSeries] = useState<OpenAqTimeseriesPoint[]>([]);
+
+  const linkedAnalysisAnchor = useMemo(() => {
+    if (!analysisAnchor) return null;
+    return resolveColocationLinks(analysisAnchor, merra2Stations, openAqStations).location;
+  }, [analysisAnchor, merra2Stations, openAqStations]);
+
   const [washuPin, setWashuPin] = useState<{ lat: number; lon: number; pm25: number | null } | null>(
     null
   );
+  const [selectedWashuStation, setSelectedWashuStation] = useState<WashUStationDailyRecord | null>(null);
+  const [washuStationSeries, setWashuStationSeries] = useState<WashUStationTimeseriesPoint[]>([]);
+  const [washuStationSeriesLoading, setWashuStationSeriesLoading] = useState(false);
+  const [washuStationSeriesGranularity, setWashuStationSeriesGranularity] = useState<'monthly' | 'annual'>('monthly');
   const [washuSeries, setWashuSeries] = useState<WashUTimeseriesPoint[]>([]);
   const [washuSeriesLoading, setWashuSeriesLoading] = useState(false);
   const [washuSeriesError, setWashuSeriesError] = useState<string | null>(null);
@@ -317,6 +340,13 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   }, [merra2Stations, showMERRA2PM25]);
 
   useEffect(() => {
+    if (!showWashU) return;
+    setSelectedWashuStation((prev) =>
+      prev ? washuStations.find((s) => s.sitename === prev.sitename) ?? null : null
+    );
+  }, [washuStations, showWashU]);
+
+  useEffect(() => {
     setAeronetDateTo(selectedDate);
     setAeronetDateFrom(selectedDate.subtract(7, 'day'));
   }, [selectedDate]);
@@ -417,6 +447,80 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     merra2AnalysisEndDate,
   ]);
 
+  // Prefetch MERRA2 for cross-layer analysis when the linked station differs from plot selection.
+  useEffect(() => {
+    const sitename = linkedAnalysisAnchor?.merra2Sitename;
+    if (!sitename) {
+      setAnchorMerra2Series([]);
+      return;
+    }
+    if (selectedMerra2Station?.sitename === sitename && merra2Series.length > 0) {
+      setAnchorMerra2Series([]);
+      return;
+    }
+    let cancelled = false;
+    getMERRA2StationTimeseries(sitename, analysisStartDate, analysisEndDate)
+      .then((res) => {
+        if (!cancelled) setAnchorMerra2Series(Array.isArray(res.points) ? res.points : []);
+      })
+      .catch(() => {
+        if (!cancelled) setAnchorMerra2Series([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    linkedAnalysisAnchor?.merra2Sitename,
+    analysisStartDate,
+    analysisEndDate,
+    selectedMerra2Station?.sitename,
+    merra2Series.length,
+  ]);
+
+  // Prefetch OpenAQ for cross-layer analysis when the linked monitor differs from plot selection.
+  useEffect(() => {
+    const sensorId = linkedAnalysisAnchor?.openaqSensorId;
+    if (!sensorId) {
+      setAnchorOpenAqSeries([]);
+      return;
+    }
+    if (selectedOpenAqStation?.sensorId === sensorId && openAqSeries.length > 0) {
+      setAnchorOpenAqSeries([]);
+      return;
+    }
+    const controller = new AbortController();
+    getOpenAqTimeseries(sensorId, analysisStartDate, analysisEndDate, 'daily', {
+      locationId: linkedAnalysisAnchor.openaqLocationId,
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        setAnchorOpenAqSeries(Array.isArray(res.points) ? res.points : []);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setAnchorOpenAqSeries([]);
+      });
+    return () => controller.abort();
+  }, [
+    linkedAnalysisAnchor?.openaqSensorId,
+    linkedAnalysisAnchor?.openaqLocationId,
+    analysisStartDate,
+    analysisEndDate,
+    selectedOpenAqStation?.sensorId,
+    openAqSeries.length,
+  ]);
+
+  const merra2SeriesForAnalysis = useMemo(
+    () => (merra2Series.length > 0 ? merra2Series : anchorMerra2Series),
+    [merra2Series, anchorMerra2Series]
+  );
+
+  const openAqSeriesForAnalysis = useMemo(
+    () => (openAqSeries.length > 0 ? openAqSeries : anchorOpenAqSeries),
+    [openAqSeries, anchorOpenAqSeries]
+  );
+
   useEffect(() => {
     if (!showWashU || !washuPin) return;
     let cancelled = false;
@@ -449,6 +553,39 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       cancelled = true;
     };
   }, [showWashU, washuPin, washuAppliedSeriesRange]);
+
+  useEffect(() => {
+    if (!showWashU || !selectedWashuStation) return;
+    setWashuStationSeriesLoading(true);
+    const bounds = washuStationTimeseriesBounds(
+      washuAppliedSeriesRange.startYear,
+      washuAppliedSeriesRange.startMonth,
+      washuAppliedSeriesRange.endYear,
+      washuAppliedSeriesRange.endMonth,
+      washuStationSeriesGranularity
+    );
+    getWashUStationTimeseries(
+      selectedWashuStation.sitename,
+      bounds.start,
+      bounds.end,
+      washuStationSeriesGranularity
+    )
+      .then((res) => {
+        setWashuStationSeries(Array.isArray(res.points) ? res.points : []);
+      })
+      .catch(() => {
+        setWashuStationSeries([]);
+      })
+      .finally(() => setWashuStationSeriesLoading(false));
+  }, [
+    showWashU,
+    selectedWashuStation?.sitename,
+    washuAppliedSeriesRange.startYear,
+    washuAppliedSeriesRange.startMonth,
+    washuAppliedSeriesRange.endYear,
+    washuAppliedSeriesRange.endMonth,
+    washuStationSeriesGranularity,
+  ]);
 
   const pointsInCircle = useMemo(() => {
     if (!showFires || !circleCenter) return [];
@@ -541,6 +678,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       setSelectedAAQE(null);
       setSelectedMerra2Station(null);
       setWashuPin(null);
+      setAnalysisAnchor(anchorFromOpenAq(station));
       setChartData([]);
       onMetricUpdate({
         label: station.name,
@@ -560,6 +698,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       setSelectedOpenAqStation(null);
       setSelectedAAQE(null);
       setWashuPin(null);
+      setAnalysisAnchor(anchorFromAeronet(site));
       setChartData([]);
       const entry = siteAodMap[site.site];
       const aod =
@@ -584,6 +723,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     setSelectedMerra2Station(null);
     setSelectedOpenAqStation(null);
     setSelectedAAQE(null);
+    setSelectedWashuStation(null);
     setWashuPin(null);
     setAnalysisAnchor(null);
     setChartData([]);
@@ -624,7 +764,9 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       }
       if (layer === 'washu') {
         setWashuPin(null);
+        setSelectedWashuStation(null);
         setWashuSeries([]);
+        setWashuStationSeries([]);
         return;
       }
       if (layer === 'aaqe') {
@@ -798,9 +940,35 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     });
   }, [analysisStartDate, analysisEndDate]);
 
+  const handleWashuStationClick = useCallback(
+    (station: WashUStationDailyRecord) => {
+      applyWashuMonthRange(defaultWashuStationSeriesRange(washuMapYear, washuMapMonth));
+      setWashuStationSeriesGranularity('monthly');
+      setSelectedWashuStation(station);
+      setSelectedSite(null);
+      setSelectedFire(null);
+      setSelectedMerra2Station(null);
+      setSelectedOpenAqStation(null);
+      setSelectedAAQE(null);
+      setWashuPin(null);
+      setWashuSeries([]);
+      setAnalysisAnchor(anchorFromWashuStation(station));
+      setChartData([]);
+      onMetricUpdate({
+        label: station.sitename,
+        value: station.pm25,
+        unit: 'µg/m³',
+      });
+      onSelectionMade?.();
+    },
+    [applyWashuMonthRange, washuMapYear, washuMapMonth, onMetricUpdate, onSelectionMade]
+  );
+
   const handleWashuMapClick = useCallback(
     (lat: number, lon: number) => {
       applyWashuMonthRange(getDefaultWashuSeriesRange(washuAnchorMonth));
+      setSelectedWashuStation(null);
+      setWashuStationSeries([]);
       setWashuPin({ lat, lon, pm25: null });
       setSelectedSite(null);
       setSelectedFire(null);
@@ -808,7 +976,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
       setSelectedOpenAqStation(null);
       setSelectedAAQE(null);
       setChartData([]);
-      setAnalysisAnchor(null);
+      setAnalysisAnchor(anchorFromWashuLocation(lat, lon));
       onMetricUpdate({
         label: `WashU location (${lat.toFixed(2)}, ${lon.toFixed(2)})`,
       });
@@ -905,12 +1073,23 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
   const merra2PanelMetricsLoading =
     showMERRA2PM25 && Boolean(selectedMerra2Station) && merra2Loading;
 
+  const washuPanelDataDate = washuDataDate ?? `${washuMapYear}-${String(washuMapMonth).padStart(2, '0')}-01`;
+  const washuPanelStation = useMemo(() => {
+    if (!showWashU || !selectedWashuStation) return null;
+    if (!washuDataDate) return selectedWashuStation;
+    return (
+      washuStations.find((s) => s.sitename === selectedWashuStation.sitename) ??
+      selectedWashuStation
+    );
+  }, [showWashU, selectedWashuStation, washuDataDate, washuStations]);
+
   const activeSelectedSite = showAeronet ? selectedSite : null;
   const activeSelectedFire = showFires ? selectedFire : null;
   const activeSelectedMerra2Station = merra2PanelStation;
   const activeSelectedOpenAq = showOpenAq ? selectedOpenAqStation : null;
   const activeSelectedAAQE = showAAQEForecast ? selectedAAQE : null;
   const activeSelectedWashU = showWashU && washuPin ? washuPin : null;
+  const activeSelectedWashuStation = washuPanelStation;
 
   const aaqeForecastDateOptions = useMemo(() => {
     if (!showAAQEForecast) return [];
@@ -1021,6 +1200,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     dismissLayerSelection,
 
     merra2Series,
+    merra2SeriesForAnalysis,
     merra2SeriesLoading,
     merra2DateFrom,
     setMerra2DateFrom,
@@ -1036,6 +1216,7 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     merra2PanelMetricsLoading,
 
     openAqSeries,
+    openAqSeriesForAnalysis,
     openAqChartDisplayPoints,
     openAqSeriesLoading,
     openAqDateFrom,
@@ -1072,8 +1253,16 @@ export function useDashboardV2LayerFeatures(input: DashboardV2LayerFeaturesInput
     applyPlotRange,
     resetPlotRange,
     handleWashuMapClick,
+    handleWashuStationClick,
     updateWashuPm25Sample,
     activeSelectedWashU,
+    selectedWashuStation,
+    activeSelectedWashuStation,
+    washuStationSeries,
+    washuStationSeriesLoading,
+    washuStationSeriesGranularity,
+    setWashuStationSeriesGranularity,
+    washuPanelDataDate,
 
     handleAAQEForecastClick,
     activeSelectedAAQE,

@@ -90,7 +90,14 @@ async function ensureCached(relativeKey) {
   const url = s3Url(relativeKey);
   const res = await fetch(url);
   if (!res.ok) {
-    throw new HttpError(res.status === 404 ? 404 : 502, `SatPM download failed (${res.status}) for ${relativeKey}`);
+    const hint =
+      res.status === 404
+        ? ' WashU SatPM Africa files are only published through Dec 2023.'
+        : '';
+    throw new HttpError(
+      res.status === 404 ? 404 : 502,
+      `SatPM download failed (${res.status}) for ${relativeKey}.${hint}`
+    );
   }
   if (!res.body) {
     throw new HttpError(502, `SatPM download returned empty body for ${relativeKey}`);
@@ -184,9 +191,45 @@ function normalizePeriod(period) {
 }
 
 function normalizeYearMonth(yearRaw, monthRaw, period) {
-  const year = Math.max(1998, Math.min(2025, Number(yearRaw) || new Date().getFullYear()));
-  const month = period === 'monthly' ? Math.max(1, Math.min(12, Number(monthRaw) || 1)) : null;
-  return { year, month };
+  const fallbackYear = 2023;
+  const fallbackMonth = 12;
+  let year = Number(yearRaw);
+  let month = period === 'monthly' ? Number(monthRaw) : null;
+  if (!Number.isFinite(year)) year = fallbackYear;
+  if (period === 'monthly' && !Number.isFinite(month)) month = fallbackMonth;
+  return clampWashuYearMonth(year, month ?? fallbackMonth, period);
+}
+
+function clampWashuYearMonth(year, month, period = 'monthly') {
+  const minYear = 1998;
+  const minMonth = 1;
+  const maxYear = 2023;
+  const maxMonth = 12;
+
+  let y = Math.round(year);
+  let m = period === 'monthly' ? Math.round(month) : 12;
+  if (!Number.isFinite(y)) y = maxYear;
+  if (!Number.isFinite(m)) m = maxMonth;
+  m = Math.max(1, Math.min(12, m));
+
+  if (y < minYear || (y === minYear && m < minMonth)) {
+    return { year: minYear, month: minMonth };
+  }
+  if (y > maxYear || (y === maxYear && m > maxMonth)) {
+    return { year: maxYear, month: maxMonth };
+  }
+  return { year: y, month: m };
+}
+
+function clampWashuTimeseriesRange(startYear, startMonth, endYear, endMonth) {
+  const start = clampWashuYearMonth(startYear, startMonth);
+  const end = clampWashuYearMonth(endYear, endMonth);
+  const startKey = start.year * 100 + start.month;
+  const endKey = end.year * 100 + end.month;
+  if (startKey <= endKey) {
+    return { startYear: start.year, startMonth: start.month, endYear: end.year, endMonth: end.month };
+  }
+  return { startYear: end.year, startMonth: end.month, endYear: end.year, endMonth: end.month };
 }
 
 function* iterMonths(startYear, startMonth, endYear, endMonth) {
@@ -268,15 +311,11 @@ export async function fetchWashUTimeseries({ lat, lon, startYear, startMonth, en
     throw new HttpError(400, 'lat/lon out of range.');
   }
 
-  let startY = Math.max(1998, Number(startYear) || 1998);
-  let endY = Math.max(startY, Number(endYear) || startY);
-  let startM = Math.max(1, Math.min(12, Number(startMonth) || 1));
-  let endM = Math.max(1, Math.min(12, Number(endMonth) || 12));
-
-  if (startY > endY || (startY === endY && startM > endM)) {
-    [startY, endY] = [endY, startY];
-    [startM, endM] = [endM, startM];
-  }
+  const clamped = clampWashuTimeseriesRange(startYear, startMonth, endYear, endMonth);
+  const startY = clamped.startYear;
+  const startM = clamped.startMonth;
+  const endY = clamped.endYear;
+  const endM = clamped.endMonth;
 
   const monthCount = await ensureMonthlyFilesCached(startY, startM, endY, endM);
 

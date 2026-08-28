@@ -7,6 +7,15 @@ import {
 } from '../services/aaqeForecastApi';
 import { getNOAA21VIIRS7DayFromWFS } from '../services/firmsApi';
 import { getMERRA2StationTimeseries } from '../services/merra2Api';
+import {
+  fetchWashUTimeseries,
+  getWashUStationTimeseries,
+  washuPeriodFromDate,
+  washuStationTimeseriesBounds,
+} from '../services/washuApi';
+import { clampIsoDateToWashuArchive } from '../dashboardV2/washuPlotRange';
+import { clampIsoDateRangeToMerra2Archive } from '../dashboardV2/merra2PlotRange';
+import { getOpenAqTimeseries } from '../services/openaqApi';
 import { haversineKm } from '../utils/geoUtils';
 import { computeDailyMeanAOD } from '../utils/aodUtils';
 import { calculateAQIFromPm25 } from '../utils/aqiUtils';
@@ -66,8 +75,9 @@ async function fetchMerra2Series(
 ): Promise<NormalizedSeries> {
   const def = getVariableDef(variable)!;
   const id = `merra2-${variable}`;
+  const { start: clampedStart, end: clampedEnd } = clampIsoDateRangeToMerra2Archive(start, end);
   try {
-    const res = await getMERRA2StationTimeseries(sitename, start, end);
+    const res = await getMERRA2StationTimeseries(sitename, clampedStart, clampedEnd);
     let points = dailyMeanPm25(res.points);
     if (variable === 'merra2_aqi') {
       points = points
@@ -89,6 +99,34 @@ async function fetchMerra2Series(
       /command failed/i.test(msg);
     return {
       id, source: 'merra2', variable, label: def.label, unit: def.unit, points: [],
+      error: isNoData ? undefined : msg,
+    };
+  }
+}
+
+async function fetchOpenAqSeries(
+  variable: AnalysisVariableId,
+  sensorId: number,
+  start: string,
+  end: string,
+  locationId?: number
+): Promise<NormalizedSeries> {
+  const def = getVariableDef(variable)!;
+  const id = `openaq-${variable}`;
+  try {
+    const res = await getOpenAqTimeseries(sensorId, start, end, 'daily', { locationId });
+    const points = res.points
+      .map((p) => {
+        const time = (p.date ?? p.datetime.slice(0, 10)).slice(0, 10);
+        return Number.isFinite(p.pm25) ? { time, value: p.pm25 } : null;
+      })
+      .filter((p): p is { time: string; value: number } => p != null);
+    return { id, source: 'openaq', variable, label: def.label, unit: def.unit, points };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isNoData = /no readings|no data|not found/i.test(msg);
+    return {
+      id, source: 'openaq', variable, label: def.label, unit: def.unit, points: [],
       error: isNoData ? undefined : msg,
     };
   }
@@ -184,6 +222,66 @@ async function fetchFireCountSeries(
   }
 }
 
+async function fetchWashuSeries(
+  variable: AnalysisVariableId,
+  location: AnalysisLocationContext,
+  start: string,
+  end: string
+): Promise<NormalizedSeries> {
+  const def = getVariableDef(variable)!;
+  const id = `washu-${variable}`;
+  const clampedStart = clampIsoDateToWashuArchive(start);
+  const clampedEnd = clampIsoDateToWashuArchive(end);
+  const startParts = washuPeriodFromDate(clampedStart);
+  const endParts = washuPeriodFromDate(clampedEnd);
+
+  try {
+    let rawPoints: { year: number; month: number; pm25: number }[] = [];
+
+    if (location.washuSitename) {
+      const bounds = washuStationTimeseriesBounds(
+        startParts.year,
+        startParts.month,
+        endParts.year,
+        endParts.month,
+        'monthly'
+      );
+      const res = await getWashUStationTimeseries(
+        location.washuSitename,
+        bounds.start,
+        bounds.end,
+        'monthly'
+      );
+      rawPoints = res.points.map((p) => ({ year: p.year, month: p.month, pm25: p.pm25 }));
+    } else {
+      const res = await fetchWashUTimeseries({
+        lat: location.latitude,
+        lon: location.longitude,
+        startYear: startParts.year,
+        startMonth: startParts.month,
+        endYear: endParts.year,
+        endMonth: endParts.month,
+      });
+      rawPoints = res.points.map((p) => ({ year: p.year, month: p.month, pm25: p.pm25 }));
+    }
+
+    const points = rawPoints
+      .map((p) => {
+        const time = `${p.year}-${String(p.month).padStart(2, '0')}-01`;
+        return Number.isFinite(p.pm25) ? { time, value: p.pm25 } : null;
+      })
+      .filter((p): p is { time: string; value: number } => p != null)
+      .sort((a, b) => a.time.localeCompare(b.time));
+
+    return { id, source: 'washu', variable, label: def.label, unit: def.unit, points };
+  } catch (err) {
+    return {
+      id, source: 'washu', variable, label: def.label, unit: def.unit, points: [],
+      error: err instanceof Error ? err.message : 'WashU fetch failed',
+    };
+  }
+}
+
 /** Resolves to `fallback` after `ms` milliseconds — used to cap a slow/dead API. */
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -199,7 +297,7 @@ export async function fetchAnalysisSeries(
   end: string,
   aeronetAodVersion: AERONETAODVersion
 ): Promise<NormalizedSeries[]> {
-  const TIMEOUT_MS = 8_000;
+  const TIMEOUT_MS = 5_000;
 
   const promises = variableIds.map((vid): Promise<NormalizedSeries | null> => {
     const def = getVariableDef(vid);
@@ -226,6 +324,12 @@ export async function fetchAnalysisSeries(
       const sitename = location.merra2Sitename;
       if (!sitename) return Promise.resolve(empty());
       fetch = fetchMerra2Series(vid, sitename, start, end);
+    } else if (def.source === 'openaq') {
+      const sensorId = location.openaqSensorId;
+      if (!sensorId) return Promise.resolve(empty());
+      fetch = fetchOpenAqSeries(vid, sensorId, start, end, location.openaqLocationId);
+    } else if (def.source === 'washu') {
+      fetch = fetchWashuSeries(vid, location, start, end);
     } else if (def.source === 'aaqe') {
       fetch = fetchAaqeSeries(vid, location.latitude, location.longitude, start, end);
     } else if (def.source === 'firms') {

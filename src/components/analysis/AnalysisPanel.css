@@ -128,20 +128,28 @@
 .analysis-scatter-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 
 .analysis-scatter-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
   white-space: nowrap;
 }
 
 .analysis-scatter-vs {
   font-size: 11px;
-  color: #9ca3af;
+  font-weight: 600;
+  color: #94a3b8;
+  padding: 0 2px;
 }
 
 /* ── Variable checkboxes ────────────────────────────────────────── */
@@ -170,6 +178,8 @@
 .analysis-var-dot-aeronet { background: #2563eb; }
 .analysis-var-dot-merra2  { background: #16a34a; }
 .analysis-var-dot-aaqe    { background: #9333ea; }
+.analysis-var-dot-openaq  { background: #0ea5e9; }
+.analysis-var-dot-washu   { background: #7c3aed; }
 .analysis-var-dot-firms   { background: #dc2626; }
 
 /* ── Status row ─────────────────────────────────────────────────── */

@@ -136,6 +136,38 @@ const DashboardV2PlotStack = ({ data, layers }: DashboardV2PlotStackProps) => {
         </div>
       )}
 
+      {data.showWashU && layers.activeSelectedWashuStation && (
+        <div className="plot-card charts-section">
+          <div className="charts-section-header">
+            <h6>WashU SatPM2.5 station analysis</h6>
+          </div>
+          <small className="layer-tip dashboard-v2-chart-subtitle">
+            Station: {layers.activeSelectedWashuStation.sitename} · {layers.washuPanelDataDate} · ACAG SatPM V6.GL.03
+          </small>
+          {layers.washuStationSeriesLoading ? (
+            <ChartLoadingFallback />
+          ) : (
+            <Suspense fallback={<ChartLoadingFallback />}>
+              <div className="charts-row">
+                <div className="chart-box" style={{ minWidth: 380 }}>
+                  <div className="chart-container">
+                    <WashUTimeSeriesChart
+                      points={layers.washuStationSeries}
+                      startYear={layers.washuAppliedSeriesRange.startYear}
+                      startMonth={layers.washuAppliedSeriesRange.startMonth}
+                      endYear={layers.washuAppliedSeriesRange.endYear}
+                      endMonth={layers.washuAppliedSeriesRange.endMonth}
+                      granularity={layers.washuStationSeriesGranularity}
+                      title={`WashU SatPM2.5 · ${layers.activeSelectedWashuStation.sitename}`}
+                    />
+                  </div>
+                </div>
+              </div>
+            </Suspense>
+          )}
+        </div>
+      )}
+
       {data.showWashU && layers.washuPin && (
         <div className="plot-card charts-section">
           <div className="charts-section-header">

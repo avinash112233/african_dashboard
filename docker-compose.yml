@@ -42,6 +42,7 @@ services:
       args:
         VITE_FIRMS_MAP_KEY: ${VITE_FIRMS_MAP_KEY}
         VITE_AAQE_USE_DIRECT_NASA: "false"
+        VITE_ENABLE_DASHBOARD_V2: ${VITE_ENABLE_DASHBOARD_V2:-false}
     container_name: aqf_frontend
     restart: unless-stopped
     ports:

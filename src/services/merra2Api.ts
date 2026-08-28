@@ -42,6 +42,13 @@ export interface MERRA2LatestDateResponse {
   sourceFile?: string;
 }
 
+export interface MERRA2StationsByDateResponse {
+  date: string;
+  requestedDate?: string;
+  clamped?: boolean;
+  stations: MERRA2StationDailyRecord[];
+}
+
 export interface MERRA2PM25GridResponse {
   date: string;
   units: string;
@@ -70,12 +77,26 @@ function setCached<T>(map: Map<string, CacheEntry<T>>, key: string, data: T) {
   map.set(key, { ts: Date.now(), data });
 }
 
+import {
+  clampIsoDateRangeToMerra2Archive,
+  clampIsoDateToMerra2Archive,
+} from '../dashboardV2/merra2PlotRange';
+
 const stationsCache = new Map<string, CacheEntry<MERRA2StationDailyRecord[]>>();
 const gridCache = new Map<string, CacheEntry<MERRA2PM25GridResponse>>();
 const timeseriesCache = new Map<string, CacheEntry<MERRA2StationTimeseriesResponse>>();
 let latestDateCache: CacheEntry<MERRA2LatestDateResponse> | null = null;
+let cachedLatestArchiveDate: string | null = null;
 
 const inflight = new Map<string, Promise<unknown>>();
+
+function clampMerra2Date(date: string): string {
+  return clampIsoDateToMerra2Archive(date, cachedLatestArchiveDate);
+}
+
+function clampMerra2Range(start: string, end: string): { start: string; end: string } {
+  return clampIsoDateRangeToMerra2Archive(start, end, cachedLatestArchiveDate);
+}
 
 function buildBaseApiUrl(path: string) {
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '';
@@ -107,15 +128,17 @@ async function fetchDeduped<T>(key: string, fetcher: () => Promise<T>): Promise<
 
 /** Get one PM2.5 daily value per station for selected UTC date. */
 export async function getMERRA2StationsByDate(date: string): Promise<MERRA2StationDailyRecord[]> {
-  const cached = getCached(stationsCache, date);
+  const clampedDate = clampMerra2Date(date);
+  const cached = getCached(stationsCache, clampedDate);
   if (cached) return cached;
 
-  return fetchDeduped(`stations:${date}`, async () => {
-    const url = buildBaseApiUrl(`/api/merra2/stations?date=${encodeURIComponent(date)}`);
+  return fetchDeduped(`stations:${clampedDate}`, async () => {
+    const url = buildBaseApiUrl(`/api/merra2/stations?date=${encodeURIComponent(clampedDate)}`);
     const res = await fetch(url);
-    const json = await readJsonOrThrow<{ date: string; stations: MERRA2StationDailyRecord[] }>(res);
+    const json = await readJsonOrThrow<MERRA2StationsByDateResponse>(res);
     const stations = Array.isArray(json.stations) ? json.stations : [];
-    setCached(stationsCache, date, stations);
+    if (json.date) setCached(stationsCache, json.date, stations);
+    else setCached(stationsCache, clampedDate, stations);
     return stations;
   });
 }
@@ -126,13 +149,14 @@ export async function getMERRA2StationTimeseries(
   start: string,
   end: string
 ): Promise<MERRA2StationTimeseriesResponse> {
-  const cacheKey = `${sitename}:${start}:${end}`;
+  const { start: clampedStart, end: clampedEnd } = clampMerra2Range(start, end);
+  const cacheKey = `${sitename}:${clampedStart}:${clampedEnd}`;
   const cached = getCached(timeseriesCache, cacheKey);
   if (cached) return cached;
 
   return fetchDeduped(`timeseries:${cacheKey}`, async () => {
     const url = buildBaseApiUrl(
-      `/api/merra2/station-timeseries?sitename=${encodeURIComponent(sitename)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+      `/api/merra2/station-timeseries?sitename=${encodeURIComponent(sitename)}&start=${encodeURIComponent(clampedStart)}&end=${encodeURIComponent(clampedEnd)}`
     );
     const res = await fetch(url);
     const data = await readJsonOrThrow<MERRA2StationTimeseriesResponse>(res);
@@ -159,6 +183,7 @@ export async function getMERRA2LatestDate(): Promise<MERRA2LatestDateResponse> {
     const url = buildBaseApiUrl('/api/merra2/latest-date');
     const res = await fetch(url);
     const data = await readJsonOrThrow<MERRA2LatestDateResponse>(res);
+    cachedLatestArchiveDate = data.latestDate ?? null;
     latestDateCache = { ts: Date.now(), data };
     return data;
   });
@@ -166,14 +191,15 @@ export async function getMERRA2LatestDate(): Promise<MERRA2LatestDateResponse> {
 
 /** CNN PM2.5 grid from GES DISC OPeNDAP (MERRA2_CNN_HAQAST_PM25). */
 export async function getMERRA2PM25Grid(date: string): Promise<MERRA2PM25GridResponse> {
-  const cached = getCached(gridCache, date);
+  const clampedDate = clampMerra2Date(date);
+  const cached = getCached(gridCache, clampedDate);
   if (cached) return cached;
 
-  return fetchDeduped(`grid:${date}`, async () => {
-    const url = buildBaseApiUrl(`/api/merra2/pm25/grid?date=${encodeURIComponent(date)}`);
+  return fetchDeduped(`grid:${clampedDate}`, async () => {
+    const url = buildBaseApiUrl(`/api/merra2/pm25/grid?date=${encodeURIComponent(clampedDate)}`);
     const res = await fetch(url);
     const data = await readJsonOrThrow<MERRA2PM25GridResponse>(res);
-    setCached(gridCache, date, data);
+    setCached(gridCache, clampedDate, data);
     return data;
   });
 }

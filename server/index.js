@@ -379,10 +379,16 @@ app.get('/api/washu/latest-date', async (_req, res) => {
 app.get('/api/merra2/stations', async (req, res) => {
   try {
     const dateParam = parseIsoDateParam(req.query.date, 'date');
-    const stations = await getStationsForDate(dateParam);
+    const { date, requestedDate, stations, clamped } = await getStationsForDate(dateParam);
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.json({ date: dateParam, stations, count: stations.length });
+    res.json({
+      date,
+      requestedDate,
+      clamped: Boolean(clamped),
+      stations,
+      count: stations.length,
+    });
   } catch (err) {
     const e = toHttpError(err);
     console.error('[MERRA2 stations] Error:', e.message);

@@ -34,6 +34,7 @@ import {
   openAqHistoricalDefaultDate,
   todayDefaultDate,
 } from '../utils/dashboardDates';
+import { clampIsoDateToMerra2Archive } from '../dashboardV2/merra2PlotRange';
 import { computeDailyMeanAOD, getAODLevelColor, getAODLevelLabel } from '../utils/aodUtils';
 import { aggregateFiresByDate, getFireBrightness, normalizeFireDate } from '../utils/fireAnalytics';
 import type { LatLonBounds } from '../utils/geoUtils';
@@ -711,13 +712,10 @@ const DashboardPage = () => {
 
   const effectiveSelectedDate = selectedDate.isAfter(dayjs(), 'day') ? dayjs() : selectedDate;
   const effectiveSelectedDateStr = effectiveSelectedDate.format('YYYY-MM-DD');
-  const merra2RequestedDate = useMemo(() => {
-    if (!merra2LatestDate) return effectiveSelectedDateStr;
-    const maxSupported = dayjs(merra2LatestDate, 'YYYY-MM-DD');
-    return effectiveSelectedDate.isAfter(maxSupported, 'day')
-      ? merra2LatestDate
-      : effectiveSelectedDateStr;
-  }, [effectiveSelectedDate, effectiveSelectedDateStr, merra2LatestDate]);
+  const merra2RequestedDate = useMemo(
+    () => clampIsoDateToMerra2Archive(effectiveSelectedDateStr, merra2LatestDate),
+    [effectiveSelectedDateStr, merra2LatestDate]
+  );
   const { startDate: analysisStartDate, endDate: analysisEndDate } = getDateRange(effectiveSelectedDateStr, analysisRange);
   const merra2AnalysisStartDate = merra2AppliedRange.start;
   const merra2AnalysisEndDate = merra2AppliedRange.end;

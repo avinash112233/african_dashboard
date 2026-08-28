@@ -42,3 +42,49 @@ export function unionDatesFromSeries(seriesList: NormalizedSeries[]): string[] {
   }
   return [...dates].sort();
 }
+
+export function isMonthlyGranularitySeries(series: NormalizedSeries): boolean {
+  return series.variable === 'washu_pm25' || series.source === 'washu';
+}
+
+/** Collapse daily (or finer) points to calendar-month means keyed as YYYY-MM-01. */
+export function aggregateSeriesToMonthly(series: NormalizedSeries): NormalizedSeries {
+  const byMonth = new Map<string, { sum: number; n: number }>();
+  for (const p of series.points) {
+    const monthKey = `${p.time.slice(0, 7)}-01`;
+    if (!monthKey || monthKey.length < 10) continue;
+    const e = byMonth.get(monthKey) ?? { sum: 0, n: 0 };
+    e.sum += p.value;
+    e.n += 1;
+    byMonth.set(monthKey, e);
+  }
+  const points = [...byMonth.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([time, { sum, n }]) => ({ time, value: sum / n }));
+  return { ...series, points };
+}
+
+/** Monthly-align all series for combined time-series when WashU is included. */
+export function prepareSeriesListForCombinedChart(seriesList: NormalizedSeries[]): NormalizedSeries[] {
+  const needsMonthly = seriesList.some(isMonthlyGranularitySeries);
+  if (!needsMonthly) return seriesList;
+  return seriesList.map((s) =>
+    isMonthlyGranularitySeries(s) ? s : aggregateSeriesToMonthly(s)
+  );
+}
+
+export function combinedChartUsesMonthlyMeans(seriesList: NormalizedSeries[]): boolean {
+  return seriesList.some(isMonthlyGranularitySeries);
+}
+
+/** Monthly-align PM2.5 series before scatter when WashU is involved. */
+export function prepareSeriesPairForScatter(
+  a: NormalizedSeries,
+  b: NormalizedSeries
+): [NormalizedSeries, NormalizedSeries] {
+  const needsMonthly = isMonthlyGranularitySeries(a) || isMonthlyGranularitySeries(b);
+  if (!needsMonthly) return [a, b];
+  const normalize = (s: NormalizedSeries) =>
+    isMonthlyGranularitySeries(s) ? s : aggregateSeriesToMonthly(s);
+  return [normalize(a), normalize(b)];
+}

@@ -3,6 +3,8 @@ import type { AnalysisAnchorSource, AnalysisLocationContext } from './types';
 const ANCHOR_SOURCE_LABEL: Record<AnalysisAnchorSource, string> = {
   aeronet: 'AERONET site',
   merra2: 'MERRA2 station',
+  openaq: 'OpenAQ monitor',
+  washu: 'WashU location',
   aaqe: 'AAQE forecast point',
   fire: 'Fire detection',
 };
@@ -56,11 +58,57 @@ export function anchorFromAaqe(point: {
   };
 }
 
+export function anchorFromOpenAq(station: {
+  name: string;
+  latitude: number;
+  longitude: number;
+  sensorId: number;
+  locationId?: number;
+}): AnalysisLocationContext {
+  return {
+    label: station.name,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    anchorSource: 'openaq',
+    openaqSensorId: station.sensorId,
+    openaqLocationId: station.locationId,
+    openaqLocationName: station.name,
+    openaqLinkDistanceKm: 0,
+  };
+}
+
 export function anchorFromFire(latitude: number, longitude: number): AnalysisLocationContext {
   return {
     label: `Fire (${latitude.toFixed(2)}, ${longitude.toFixed(2)})`,
     latitude,
     longitude,
     anchorSource: 'fire',
+  };
+}
+
+export function anchorFromWashuStation(station: {
+  sitename: string;
+  latitude: number;
+  longitude: number;
+}): AnalysisLocationContext {
+  return {
+    label: station.sitename,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    anchorSource: 'washu',
+    washuSitename: station.sitename,
+  };
+}
+
+export function anchorFromWashuLocation(
+  latitude: number,
+  longitude: number,
+  label?: string
+): AnalysisLocationContext {
+  return {
+    label: label ?? `WashU (${latitude.toFixed(2)}, ${longitude.toFixed(2)})`,
+    latitude,
+    longitude,
+    anchorSource: 'washu',
   };
 }

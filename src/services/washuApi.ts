@@ -1,6 +1,48 @@
 export type WashUPeriod = 'monthly' | 'annual';
 export type WashUSource = 'satpm' | 'sample';
 
+const WASHU_ARCHIVE_MIN_YEAR = 1998;
+const WASHU_ARCHIVE_MAX_YEAR = 2023;
+const WASHU_ARCHIVE_MAX_MONTH = 12;
+
+function clampWashuGridYearMonth(year: number, month: number | null): { year: number; month: number | null } {
+  let y = Number.isFinite(year) ? Math.round(year) : WASHU_ARCHIVE_MAX_YEAR;
+  if (y < WASHU_ARCHIVE_MIN_YEAR) y = WASHU_ARCHIVE_MIN_YEAR;
+  if (y > WASHU_ARCHIVE_MAX_YEAR) y = WASHU_ARCHIVE_MAX_YEAR;
+  if (month == null) return { year: y, month: null };
+  let m = Math.max(1, Math.min(12, Math.round(month)));
+  if (y === WASHU_ARCHIVE_MAX_YEAR && m > WASHU_ARCHIVE_MAX_MONTH) {
+    m = WASHU_ARCHIVE_MAX_MONTH;
+  }
+  return { year: y, month: m };
+}
+
+function clampWashuTimeseriesRange(
+  startYear: number,
+  startMonth: number,
+  endYear: number,
+  endMonth: number
+): { startYear: number; startMonth: number; endYear: number; endMonth: number } {
+  const start = clampWashuGridYearMonth(startYear, startMonth);
+  const end = clampWashuGridYearMonth(endYear, endMonth);
+  const startKey = start.year * 100 + (start.month ?? 1);
+  const endKey = end.year * 100 + (end.month ?? 12);
+  if (startKey <= endKey) {
+    return {
+      startYear: start.year,
+      startMonth: start.month ?? 1,
+      endYear: end.year,
+      endMonth: end.month ?? 12,
+    };
+  }
+  return {
+    startYear: end.year,
+    startMonth: end.month ?? 12,
+    endYear: end.year,
+    endMonth: end.month ?? 12,
+  };
+}
+
 export interface WashUGrid {
   period: WashUPeriod;
   year: number;
@@ -116,7 +158,8 @@ export async function loadWashUGrid(
   year: number,
   month: number | null
 ): Promise<WashUGrid> {
-  const key = gridCacheKey(period, year, month);
+  const clamped = clampWashuGridYearMonth(year, period === 'monthly' ? month : null);
+  const key = gridCacheKey(period, clamped.year, clamped.month);
   const cached = memoryCache.get(key);
   if (cached) return cached;
 
@@ -130,7 +173,7 @@ export async function loadWashUGrid(
       return idbHit;
     }
 
-    const grid = await fetchGridFromApi(period, year, month);
+    const grid = await fetchGridFromApi(period, clamped.year, clamped.month);
     memoryCache.set(key, grid);
     void writeGridToIdb(key, grid);
     return grid;
@@ -152,13 +195,19 @@ export async function fetchWashUTimeseries(params: {
   endYear: number;
   endMonth?: number;
 }): Promise<{ points: WashUTimeseriesPoint[]; units: string; lat: number; lon: number; monthCount?: number; pointsReturned?: number }> {
+  const clamped = clampWashuTimeseriesRange(
+    params.startYear,
+    params.startMonth ?? 1,
+    params.endYear,
+    params.endMonth ?? 12
+  );
   const q = new URLSearchParams({
     lat: String(params.lat),
     lon: String(params.lon),
-    startYear: String(params.startYear),
-    startMonth: String(params.startMonth ?? 1),
-    endYear: String(params.endYear),
-    endMonth: String(params.endMonth ?? 12),
+    startYear: String(clamped.startYear),
+    startMonth: String(clamped.startMonth),
+    endYear: String(clamped.endYear),
+    endMonth: String(clamped.endMonth),
   });
   const url = buildBaseApiUrl(`/api/washu/pm25/timeseries?${q.toString()}`);
   const res = await fetch(url);
@@ -171,7 +220,10 @@ export async function fetchWashUTimeseries(params: {
 
 export function washuPeriodFromDate(dateStr: string): { year: number; month: number } {
   const [y, m] = dateStr.split('-').map(Number);
-  return { year: y || new Date().getFullYear(), month: m || 1 };
+  return {
+    year: y && y >= 1998 && y <= 2023 ? y : 2023,
+    month: m && m >= 1 && m <= 12 ? m : 12,
+  };
 }
 
 export function washuStationTimeseriesBounds(
@@ -190,15 +242,16 @@ export function washuStationTimeseriesBounds(
 }
 
 export function defaultWashuStationSeriesRange(mapYear: number, mapMonth: number) {
-  let endYear = mapYear;
-  let endMonth = mapMonth;
-  let startYear = mapYear;
-  let startMonth = mapMonth - 11;
+  const anchor = clampWashuGridYearMonth(mapYear, mapMonth);
+  let endYear = anchor.year;
+  let endMonth = anchor.month ?? 12;
+  let startYear = endYear;
+  let startMonth = endMonth - 11;
   while (startMonth <= 0) {
     startMonth += 12;
     startYear -= 1;
   }
-  return { startYear, startMonth, endYear, endMonth };
+  return clampWashuTimeseriesRange(startYear, startMonth, endYear, endMonth);
 }
 
 export interface WashUStationDailyRecord {

@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf';
 import type { AERONETAODVersion } from '../../services/aeronetApi';
 import { getMERRA2StationList } from '../../services/merra2Api';
 import type { MERRA2StationDailyRecord } from '../../services/merra2Api';
+import type { OpenAqStationRecord } from '../../services/openaqApi';
 import {
   ANALYSIS_VARIABLES,
   DEFAULT_ANALYSIS_VARIABLES,
@@ -10,9 +11,9 @@ import {
 } from '../../analysis/catalog';
 import { fetchAnalysisSeries } from '../../analysis/fetchAnalysisSeries';
 import { downloadCsv, seriesListToCsv } from '../../analysis/exportSeries';
-import { MERRA2_STATION_LINK_MAX_KM } from '../../analysis/constants';
+import { MERRA2_STATION_LINK_MAX_KM, OPENAQ_LINK_PREFERRED_KM } from '../../analysis/constants';
 import { anchorSourceLabel } from '../../analysis/locationAnchor';
-import { findNearestStationWithDistance } from '../../analysis/linkStations';
+import { resolveColocationLinks } from '../../analysis/resolveColocation';
 import type {
   AnalysisLocationContext,
   AnalysisVariableId,
@@ -40,14 +41,22 @@ function emptySeriesFor(vid: AnalysisVariableId): NormalizedSeries | null {
 
 function mergeSeriesList(
   prev: NormalizedSeries[],
-  incoming: NormalizedSeries,
+  incoming: NormalizedSeries[],
   order: AnalysisVariableId[]
 ): NormalizedSeries[] {
   const byVar = new Map(prev.map((s) => [s.variable, s]));
-  byVar.set(incoming.variable, incoming);
+  for (const series of incoming) byVar.set(series.variable, series);
   return order
     .map((vid) => byVar.get(vid) ?? emptySeriesFor(vid))
     .filter((s): s is NormalizedSeries => s != null);
+}
+
+function canFetchVariable(vid: AnalysisVariableId, loc: AnalysisLocationContext): boolean {
+  const src = getVariableDef(vid)?.source;
+  if (src === 'merra2') return Boolean(loc.merra2Sitename);
+  if (src === 'openaq') return Boolean(loc.openaqSensorId);
+  if (src === 'aeronet') return Boolean(loc.aeronetQuerySite);
+  return true;
 }
 
 interface AnalysisPanelProps {
@@ -55,13 +64,24 @@ interface AnalysisPanelProps {
   startDate: string;
   endDate: string;
   aeronetAodVersion: AERONETAODVersion;
-  analysisRange: AnalysisRangeOption;
-  onAnalysisRangeChange: (range: AnalysisRangeOption) => void;
+  analysisRange?: AnalysisRangeOption;
+  onAnalysisRangeChange?: (range: AnalysisRangeOption) => void;
   onClearAnchor?: () => void;
   /** Already-loaded MERRA2 stations from DashboardPage — avoids a backend round-trip. */
   preloadedStations?: MERRA2StationDailyRecord[];
+  /** Already-loaded OpenAQ monitors for nearest-monitor linking. */
+  preloadedOpenAqStations?: OpenAqStationRecord[];
   /** Dashboard 1 uses modal charts; Dashboard 2 keeps inline scrollable charts. */
   chartsLayout?: 'modal' | 'inline';
+  /** Dashboard 2: plot range comes from sidebar plotting panel. */
+  hideRangeControl?: boolean;
+  /** Dashboard 2: preset drives variable selection. */
+  hideVariableToggles?: boolean;
+  presetVariables?: AnalysisVariableId[];
+  presetScatterX?: AnalysisVariableId;
+  presetScatterY?: AnalysisVariableId;
+  /** Series already loaded by the plot stack — skip duplicate network requests. */
+  preloadedSeries?: Partial<Record<AnalysisVariableId, NormalizedSeries>>;
 }
 
 const AnalysisPanel = ({
@@ -69,151 +89,157 @@ const AnalysisPanel = ({
   startDate,
   endDate,
   aeronetAodVersion,
-  analysisRange,
+  analysisRange = '30D',
   onAnalysisRangeChange,
   onClearAnchor,
   preloadedStations,
+  preloadedOpenAqStations,
   chartsLayout = 'modal',
+  hideRangeControl = false,
+  hideVariableToggles = false,
+  presetVariables,
+  presetScatterX,
+  presetScatterY,
+  preloadedSeries,
 }: AnalysisPanelProps) => {
-  const [selectedVars, setSelectedVars] = useState<AnalysisVariableId[]>(DEFAULT_ANALYSIS_VARIABLES);
+  const [selectedVars, setSelectedVars] = useState<AnalysisVariableId[]>(
+    presetVariables ?? DEFAULT_ANALYSIS_VARIABLES
+  );
   const [seriesList, setSeriesList] = useState<NormalizedSeries[]>([]);
   const [loading, setLoading] = useState(false);
-  const [resolvedLocation, setResolvedLocation] = useState<AnalysisLocationContext | null>(null);
-  const [merra2LinkDone, setMerra2LinkDone] = useState(false);
-  const [scatterX, setScatterX] = useState<AnalysisVariableId>('aeronet_aod_500');
-  const [scatterY, setScatterY] = useState<AnalysisVariableId>('merra2_pm25');
+  const [resolvedLocation, setResolvedLocation] = useState<AnalysisLocationContext>(() => location);
+  const [colocationLinkDone, setColocationLinkDone] = useState(true);
+  const [scatterX, setScatterX] = useState<AnalysisVariableId>(
+    presetScatterX ?? 'aeronet_aod_500'
+  );
+  const [scatterY, setScatterY] = useState<AnalysisVariableId>(presetScatterY ?? 'merra2_pm25');
   const [showModal, setShowModal] = useState(false);
   const [makingPdf, setMakingPdf] = useState(false);
   const chartsBodyRef = useRef<HTMLDivElement>(null);
   const loadGenRef = useRef(0);
-  const inflightLoadsRef = useRef(0);
 
-  // Phase 1: set location immediately. Phase 2: resolve nearest MERRA2 station in background.
   useEffect(() => {
-    let cancelled = false;
-    setMerra2LinkDone(false);
+    if (!presetVariables) return;
+    setSelectedVars(presetVariables);
+    if (presetScatterX) setScatterX(presetScatterX);
+    if (presetScatterY) setScatterY(presetScatterY);
+  }, [presetVariables, presetScatterX, presetScatterY]);
 
-    const base: AnalysisLocationContext = { ...location };
-    setResolvedLocation(base);
-    setSeriesList(
-      selectedVars.map((vid) => emptySeriesFor(vid)).filter((s): s is NormalizedSeries => s != null)
-    );
+  const syncColocation = useMemo(
+    () => resolveColocationLinks(location, preloadedStations, preloadedOpenAqStations),
+    [location, preloadedStations, preloadedOpenAqStations]
+  );
 
-    if (base.merra2Sitename != null && base.merra2LinkDistanceKm != null) {
-      setMerra2LinkDone(true);
+  // Resolve nearest MERRA2/OpenAQ synchronously when station lists are already on the page.
+  useEffect(() => {
+    setResolvedLocation(syncColocation.location);
+    if (!syncColocation.needsAsyncMerra2List) {
+      setColocationLinkDone(true);
       return;
     }
 
-    const linkTimeoutMs = preloadedStations && preloadedStations.length > 0 ? 2_000 : 5_000;
+    let cancelled = false;
+    setColocationLinkDone(false);
     const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), linkTimeoutMs)
+      setTimeout(() => reject(new Error('timeout')), 3_000)
     );
 
     (async () => {
       try {
-        const stations = (preloadedStations && preloadedStations.length > 0)
-          ? preloadedStations
-          : await Promise.race([getMERRA2StationList(), timeout]);
-        const nearest = findNearestStationWithDistance(
-          base.latitude,
-          base.longitude,
-          stations.map((s) => ({
-            latitude: s.latitude,
-            longitude: s.longitude,
-            sitename: s.sitename,
-          }))
+        const stations = await Promise.race([getMERRA2StationList(), timeout]);
+        if (cancelled) return;
+        const linked = resolveColocationLinks(
+          location,
+          stations,
+          preloadedOpenAqStations
         );
-        if (!cancelled && nearest) {
-          setResolvedLocation({
-            ...base,
-            merra2Sitename: nearest.station.sitename,
-            merra2LinkDistanceKm: nearest.distanceKm,
-            merra2LinkBeyondPreferred: nearest.isBeyondPreferred,
-          });
-        }
+        setResolvedLocation(linked.location);
       } catch {
-        // Timeout or backend unavailable — non-MERRA2 series still load below.
+        if (!cancelled) setResolvedLocation(syncColocation.location);
       } finally {
-        if (!cancelled) setMerra2LinkDone(true);
+        if (!cancelled) setColocationLinkDone(true);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [location, preloadedStations]);
+    return () => {
+      cancelled = true;
+    };
+  }, [location, syncColocation, preloadedOpenAqStations]);
 
-  const loadVariables = useCallback(async (
-    loc: AnalysisLocationContext,
-    variableIds: AnalysisVariableId[]
-  ) => {
-    if (variableIds.length === 0) return;
-    const gen = ++loadGenRef.current;
-    inflightLoadsRef.current += 1;
-    setLoading(true);
+  const seedSeriesList = useCallback(
+    (vars: AnalysisVariableId[]) =>
+      vars
+        .map((vid) => preloadedSeries?.[vid] ?? emptySeriesFor(vid))
+        .filter((s): s is NormalizedSeries => s != null),
+    [preloadedSeries]
+  );
 
-    try {
-      await Promise.all(
-        variableIds.map(async (vid) => {
-          const [series] = await fetchAnalysisSeries(
-            [vid],
-            loc,
-            startDate,
-            endDate,
-            aeronetAodVersion
-          );
-          if (!series || gen !== loadGenRef.current) return;
-          setSeriesList((prev) => mergeSeriesList(prev, series, selectedVars));
-        })
-      );
-    } finally {
-      inflightLoadsRef.current -= 1;
-      if (inflightLoadsRef.current <= 0 && gen === loadGenRef.current) {
-        inflightLoadsRef.current = 0;
+  const loadSeriesForLocation = useCallback(
+    async (loc: AnalysisLocationContext, variableIds: AnalysisVariableId[]) => {
+      const varsToFetch = variableIds.filter((vid) => {
+        if (preloadedSeries?.[vid]?.points.length) return false;
+        return canFetchVariable(vid, loc);
+      });
+
+      const initial = seedSeriesList(variableIds);
+      setSeriesList(initial);
+
+      if (varsToFetch.length === 0) {
         setLoading(false);
+        return;
       }
-    }
-  }, [selectedVars, startDate, endDate, aeronetAodVersion]);
 
-  // Load AERONET / AAQE / FIRMS immediately — do not wait for MERRA2 link.
+      const gen = ++loadGenRef.current;
+      setLoading(true);
+
+      try {
+        const fetched = await fetchAnalysisSeries(
+          varsToFetch,
+          loc,
+          startDate,
+          endDate,
+          aeronetAodVersion
+        );
+        if (gen !== loadGenRef.current) return;
+        setSeriesList((prev) => mergeSeriesList(prev, fetched, variableIds));
+      } finally {
+        if (gen === loadGenRef.current) setLoading(false);
+      }
+    },
+    [aeronetAodVersion, endDate, preloadedSeries, seedSeriesList, startDate]
+  );
+
+  // Fetch all preset variables in one parallel batch once colocation is ready.
   useEffect(() => {
-    if (!resolvedLocation) return;
-    const vars = selectedVars.filter((vid) => getVariableDef(vid)?.source !== 'merra2');
-    loadVariables(resolvedLocation, vars);
+    if (!colocationLinkDone) return;
+    let cancelled = false;
+
+    (async () => {
+      if (cancelled) return;
+      await loadSeriesForLocation(resolvedLocation, selectedVars);
+    })();
+
+    return () => {
+      cancelled = true;
+      loadGenRef.current += 1;
+    };
   }, [
-    resolvedLocation?.latitude,
-    resolvedLocation?.longitude,
-    resolvedLocation?.aeronetQuerySite,
-    resolvedLocation?.anchorSource,
+    colocationLinkDone,
+    resolvedLocation,
     selectedVars,
     startDate,
     endDate,
     aeronetAodVersion,
-    loadVariables,
+    preloadedSeries,
+    loadSeriesForLocation,
   ]);
 
-  // Load MERRA2 variables only after nearest station is resolved (avoids a full reload).
-  useEffect(() => {
-    if (!resolvedLocation?.merra2Sitename) return;
-    const vars = selectedVars.filter((vid) => getVariableDef(vid)?.source === 'merra2');
-    loadVariables(resolvedLocation, vars);
-  }, [
-    resolvedLocation?.merra2Sitename,
-    selectedVars,
-    startDate,
-    endDate,
-    aeronetAodVersion,
-    loadVariables,
-  ]);
-
-  const loadSeries = useCallback(async (loc: AnalysisLocationContext) => {
-    setSeriesList(
-      selectedVars.map((vid) => emptySeriesFor(vid)).filter((s): s is NormalizedSeries => s != null)
-    );
-    const vars = selectedVars.filter((vid) => {
-      const src = getVariableDef(vid)?.source;
-      return src !== 'merra2' || Boolean(loc.merra2Sitename);
-    });
-    await loadVariables(loc, vars);
-  }, [selectedVars, loadVariables]);
+  const loadSeries = useCallback(
+    async (loc: AnalysisLocationContext) => {
+      await loadSeriesForLocation(loc, selectedVars);
+    },
+    [loadSeriesForLocation, selectedVars]
+  );
 
   const seriesWithData = useMemo(
     () => seriesList.filter((s) => s.points.length > 0),
@@ -321,7 +347,13 @@ const AnalysisPanel = ({
       : displayLocation.merra2Sitename
     : null;
   const merra2IsFar    = displayLocation.merra2LinkBeyondPreferred === true;
-  const isLinking      = !merra2LinkDone && resolvedLocation?.merra2Sitename == null;
+  const openaqLinkText = displayLocation.openaqLocationName
+    ? displayLocation.openaqLinkDistanceKm != null && displayLocation.openaqLinkDistanceKm > 0
+      ? `${displayLocation.openaqLocationName} (${displayLocation.openaqLinkDistanceKm.toFixed(0)} km)`
+      : displayLocation.openaqLocationName
+    : null;
+  const openaqIsFar = displayLocation.openaqLinkBeyondPreferred === true;
+  const isLinking = !colocationLinkDone;
 
   return (
     <>
@@ -357,7 +389,7 @@ const AnalysisPanel = ({
 
             <span className="analysis-meta-key">MERRA2</span>
             <span className={`analysis-meta-val${merra2IsFar ? ' analysis-meta-warning' : ''}`}>
-              {isLinking
+              {isLinking && displayLocation.merra2Sitename == null
                 ? <span className="analysis-linking-badge">searching…</span>
                 : merra2LinkText
                   ? <>
@@ -371,8 +403,29 @@ const AnalysisPanel = ({
                         </span>
                       )}
                     </>
-                  : merra2LinkDone
-                    ? <span className="analysis-meta-dim">unavailable (start backend)</span>
+                  : colocationLinkDone
+                    ? <span className="analysis-meta-dim">unavailable</span>
+                    : 'searching…'}
+            </span>
+
+            <span className="analysis-meta-key">OpenAQ</span>
+            <span className={`analysis-meta-val${openaqIsFar ? ' analysis-meta-warning' : ''}`}>
+              {isLinking && displayLocation.openaqSensorId == null
+                ? <span className="analysis-linking-badge">searching…</span>
+                : openaqLinkText
+                  ? <>
+                      {openaqLinkText}
+                      {openaqIsFar && (
+                        <span
+                          className="analysis-far-badge"
+                          title={`Beyond preferred ${OPENAQ_LINK_PREFERRED_KM} km radius`}
+                        >
+                          {' '}⚠ nearest
+                        </span>
+                      )}
+                    </>
+                  : colocationLinkDone
+                    ? <span className="analysis-meta-dim">no monitor linked</span>
                     : 'searching…'}
             </span>
 
@@ -383,20 +436,21 @@ const AnalysisPanel = ({
 
         {/* Controls */}
         <div className="analysis-controls">
-          <div className="analysis-controls-row">
-            <label htmlFor="analysis-range">Range</label>
-            <select
-              id="analysis-range"
-              value={analysisRange}
-              onChange={(e) => onAnalysisRangeChange(e.target.value as AnalysisRangeOption)}
-            >
-              <option value="7D">Last 7 days</option>
-              <option value="30D">Last 30 days</option>
-              <option value="90D">Last 90 days</option>
-            </select>
-          </div>
+          {!hideRangeControl && onAnalysisRangeChange && (
+            <div className="analysis-controls-row">
+              <label htmlFor="analysis-range">Range</label>
+              <select
+                id="analysis-range"
+                value={analysisRange}
+                onChange={(e) => onAnalysisRangeChange(e.target.value as AnalysisRangeOption)}
+              >
+                <option value="7D">Last 7 days</option>
+                <option value="30D">Last 30 days</option>
+                <option value="90D">Last 90 days</option>
+              </select>
+            </div>
+          )}
 
-          {/* Scatter axis pickers — compact, always visible */}
           <div className="analysis-scatter-row">
             <span className="analysis-scatter-label">Scatter</span>
             <select
@@ -421,20 +475,21 @@ const AnalysisPanel = ({
           </div>
         </div>
 
-        {/* Variable checkboxes */}
-        <div className="analysis-variable-list">
-          {ANALYSIS_VARIABLES.map((v) => (
-            <label key={v.id} className="analysis-var-label">
-              <input
-                type="checkbox"
-                checked={selectedVars.includes(v.id)}
-                onChange={() => toggleVar(v.id)}
-              />
-              <span className={`analysis-var-dot analysis-var-dot-${v.source}`} />
-              {v.label}
-            </label>
-          ))}
-        </div>
+        {!hideVariableToggles && (
+          <div className="analysis-variable-list">
+            {ANALYSIS_VARIABLES.map((v) => (
+              <label key={v.id} className="analysis-var-label">
+                <input
+                  type="checkbox"
+                  checked={selectedVars.includes(v.id)}
+                  onChange={() => toggleVar(v.id)}
+                />
+                <span className={`analysis-var-dot analysis-var-dot-${v.source}`} />
+                {v.label}
+              </label>
+            ))}
+          </div>
+        )}
 
         {/* Status row */}
         {loading && (

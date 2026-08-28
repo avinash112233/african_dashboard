@@ -75,6 +75,19 @@ function MapLayerVisibilityRefresh({
   return null;
 }
 
+function MapFlyTo({
+  target,
+}: {
+  target: { lat: number; lon: number; zoom: number; key: number } | null;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    map.flyTo([target.lat, target.lon], target.zoom, { duration: 1.25 });
+  }, [target?.key, map]);
+  return null;
+}
+
 function getContrastingTextColor(hexColor: string): string {
   const hex = hexColor.replace('#', '');
   if (hex.length !== 6) return '#111827';
@@ -152,6 +165,8 @@ interface MapVisualizationProps {
   washuPeriodLabel?: string;
   onWashuPm25Sample?: (sample: WashUPM25Sample | null) => void;
   onWashuMapClick?: (lat: number, lon: number) => void;
+  /** Dashboard 2: programmatic pan/zoom when user picks a location. */
+  flyToTarget?: { lat: number; lon: number; zoom: number; key: number } | null;
 }
 
 const MapVisualization = ({
@@ -202,14 +217,15 @@ const MapVisualization = ({
   washuStations = [],
   onWashuStationClick,
   washuPeriod = 'monthly',
-  washuYear = new Date().getFullYear(),
-  washuMonth = new Date().getMonth() + 1,
+  washuYear = 2023,
+  washuMonth = 12,
   onWashuGridLoadingChange,
   onWashuGridSourceChange,
   washuGridSource = null,
   washuPeriodLabel,
   onWashuPm25Sample,
   onWashuMapClick,
+  flyToTarget = null,
 }: MapVisualizationProps) => {
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [pm25Sample, setPm25Sample] = useState<PM25Sample | null>(null);
@@ -250,6 +266,7 @@ const MapVisualization = ({
       preferCanvas
     >
       <MapResizeWatcher />
+      {flyToTarget && <MapFlyTo target={flyToTarget} />}
       <MapLayerVisibilityRefresh
         showFires={showFires}
         showAAQEForecast={showAAQEForecast}

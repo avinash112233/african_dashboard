@@ -16,10 +16,11 @@ import type { TooltipItem } from 'chart.js';
 import { Line, Bar } from 'react-chartjs-2';
 import { formatDisplayDate } from '../../utils/dateFormat';
 import { chartPluginsBase, formatChartTick, tooltipLine } from '../../utils/chartFormat';
-import { alignSeriesByDate, unionDatesFromSeries } from '../../analysis/alignSeries';
+import { unionDatesFromSeries } from '../../analysis/alignSeries';
 import type { AnalysisLocationContext, AnalysisVariableId, NormalizedSeries } from '../../analysis/types';
 import type { MERRA2StationDailyRecord } from '../../services/merra2Api';
 import { anchorSourceLabel } from '../../analysis/locationAnchor';
+import ScatterCorrelationCard from './ScatterCorrelationCard';
 import './AnalysisChartsModal.css';
 
 ChartJS.register(
@@ -371,62 +372,6 @@ function SingleChartCard({ series }: SingleChartCardProps) {
   );
 }
 
-// ── Scatter card ─────────────────────────────────────────────────────────────
-
-interface ScatterCardProps { xSeries: NormalizedSeries; ySeries: NormalizedSeries; }
-
-function ScatterCard({ xSeries, ySeries }: ScatterCardProps) {
-  const aligned = alignSeriesByDate([xSeries, ySeries]);
-  const points  = aligned.map((row) => ({ x: row.values[xSeries.id], y: row.values[ySeries.id] }));
-  const color   = SOURCE_COLOR[xSeries.source] ?? '#2563eb';
-  const title   = `${ySeries.label} vs ${xSeries.label}`;
-
-  return (
-    <div className="acm-card acm-card-wide" data-chart-label={title}>
-      <div className="acm-card-header">
-        <span className="acm-dot" style={{ background: color }} />
-        <span className="acm-card-title">{title}</span>
-        <span className="acm-card-count">{points.length} co-located days</span>
-      </div>
-      <div className="acm-chart-area">
-        {points.length === 0 ? (
-          <div className="acm-chart-empty">No co-located data (need overlapping dates in both series)</div>
-        ) : (
-          <Line
-            data={{ datasets: [{ type: 'scatter' as never, data: points as never, backgroundColor: `${color}88`, borderColor: color, pointRadius: 4, pointHoverRadius: 6 }] }}
-            options={{
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {
-                ...chartPluginsBase,
-                legend: { display: false },
-                tooltip: {
-                  callbacks: {
-                    label: (ctx: TooltipItem<'line'>) =>
-                      `${xSeries.label}: ${formatChartTick(ctx.parsed.x)}  |  ${ySeries.label}: ${formatChartTick(ctx.parsed.y)}`,
-                  },
-                },
-              },
-              scales: {
-                x: {
-                  title: { display: true, text: xSeries.unit ? `${xSeries.label} (${xSeries.unit})` : xSeries.label, font: { size: 12 }, color: '#374151' },
-                  ticks: { color: '#6b7280', font: { size: 11 }, callback: (v: string | number) => formatChartTick(v) },
-                  grid: { color: 'rgba(0,0,0,0.06)' },
-                },
-                y: {
-                  title: { display: true, text: ySeries.unit ? `${ySeries.label} (${ySeries.unit})` : ySeries.label, font: { size: 12 }, color: '#374151' },
-                  ticks: { color: '#6b7280', font: { size: 11 }, callback: (v: string | number) => formatChartTick(v) },
-                  grid: { color: 'rgba(0,0,0,0.06)' },
-                },
-              },
-            } as never}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Combined comparison chart (shown in UI + exported to PDF) ─────────────────
 
 interface CombinedChartProps { seriesList: NormalizedSeries[]; }
@@ -683,9 +628,9 @@ const AnalysisChartsModal = ({
               {/* Scatter correlation */}
               {active.length >= 2 && xSeries && ySeries && xSeries.id !== ySeries.id && (
                 <>
-                  <div className="acm-section-label" style={{ marginTop: 28 }}>Scatter Correlation</div>
+                  <div className="acm-section-label acm-section-label--spaced">Scatter Correlation</div>
                   <div className="acm-grid acm-grid-scatter">
-                    <ScatterCard xSeries={xSeries} ySeries={ySeries} />
+                    <ScatterCorrelationCard xSeries={xSeries} ySeries={ySeries} />
                   </div>
                 </>
               )}
@@ -693,7 +638,7 @@ const AnalysisChartsModal = ({
               {/* Combined comparison chart */}
               {active.length >= 2 && (
                 <>
-                  <div className="acm-section-label" style={{ marginTop: 28 }}>Combined Comparison</div>
+                  <div className="acm-section-label acm-section-label--spaced">Combined Comparison</div>
                   <div className="acm-combined-chart">
                     <CombinedChart seriesList={active} />
                   </div>

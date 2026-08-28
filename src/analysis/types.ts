@@ -1,11 +1,13 @@
-export type AnalysisDataSource = 'aeronet' | 'merra2' | 'aaqe' | 'firms';
-export type AnalysisAnchorSource = 'aeronet' | 'merra2' | 'aaqe' | 'fire';
+export type AnalysisDataSource = 'aeronet' | 'merra2' | 'openaq' | 'washu' | 'aaqe' | 'firms';
+export type AnalysisAnchorSource = 'aeronet' | 'merra2' | 'openaq' | 'washu' | 'aaqe' | 'fire';
 
 export type AnalysisVariableId =
   | 'aeronet_aod_500'
   | 'aeronet_aod_675'
   | 'merra2_pm25'
   | 'merra2_aqi'
+  | 'openaq_pm25'
+  | 'washu_pm25'
   | 'aaqe_pm25'
   | 'fire_count';
 
@@ -34,6 +36,12 @@ export interface AnalysisLocationContext {
   merra2LinkDistanceKm?: number;
   /** True when the linked MERRA2 station exceeds the preferred colocation radius. */
   merra2LinkBeyondPreferred?: boolean;
+  openaqSensorId?: number;
+  openaqLocationId?: number;
+  openaqLocationName?: string;
+  openaqLinkDistanceKm?: number;
+  openaqLinkBeyondPreferred?: boolean;
+  washuSitename?: string;
 }
 
 export type AnalysisChartMode = 'timeseries' | 'scatter';

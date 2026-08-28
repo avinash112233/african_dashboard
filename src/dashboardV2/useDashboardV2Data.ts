@@ -44,12 +44,21 @@ import {
   type DashboardV2LayerKey,
 } from './config';
 import {
+  clampIsoDateToMerra2Archive,
+} from './merra2PlotRange';
+import {
   getPresetPlotRange,
   normalizeCustomPlotRange,
   plotRangeLabel,
 } from './plotRange';
+import {
+  AFRICA_OVERVIEW_LOCATION,
+  toMapFlyTo,
+  type DashboardV2Location,
+  type DashboardV2MapFlyTo,
+} from './locations';
 import type { PlotRangeMode, PlotRangePreset } from './types';
-import { washuPeriodFromDate, loadWashUGrid, type WashUPeriod } from '../services/washuApi';
+import { washuPeriodFromDate, loadWashUGrid, getWashUStationsByDate, getWashULatestDate, type WashUPeriod, type WashUStationDailyRecord } from '../services/washuApi';
 import { loadMerra2DailyCube } from '../services/merra2GridCube';
 import { formatDateMonthDayYear } from '../utils/dateFormat';
 import {
@@ -81,6 +90,7 @@ export function useDashboardV2Data() {
   const [appliedPlotEndDate, setAppliedPlotEndDate] = useState(initialPlotRange.endDate);
   const [country, setCountry] = useState('Africa overview');
   const [city, setCity] = useState('— select country first —');
+  const [mapFlyTo, setMapFlyTo] = useState<DashboardV2MapFlyTo | null>(null);
   const [stationNetwork, setStationNetwork] = useState('All station networks');
   const [showHeatMap, setShowHeatMap] = useState(true);
   const [heatMapOpacity, setHeatMapOpacity] = useState(78);
@@ -115,6 +125,13 @@ export function useDashboardV2Data() {
   const [washuGridLoading, setWashuGridLoading] = useState(false);
   const [washuGridSource, setWashuGridSource] = useState<'satpm' | 'sample' | null>(null);
   const [washuGridFallbackReason, setWashuGridFallbackReason] = useState<string | null>(null);
+  const [washuShowStations, setWashuShowStations] = useState(true);
+  const [washuStationsLoading, setWashuStationsLoading] = useState(false);
+  const [washuStationsError, setWashuStationsError] = useState<string | null>(null);
+  const [washuStationsNotice, setWashuStationsNotice] = useState<string | null>(null);
+  const [washuDataDate, setWashuDataDate] = useState<string | null>(null);
+  const [washuLatestDate, setWashuLatestDate] = useState<string | null>(null);
+  const [washuStations, setWashuStations] = useState<WashUStationDailyRecord[]>([]);
 
   const [openAqStations, setOpenAqStations] = useState<OpenAqStationRecord[]>([]);
   const [openAqLoading, setOpenAqLoading] = useState(false);
@@ -239,13 +256,10 @@ export function useDashboardV2Data() {
     }
   }, [effectiveSelectedDateStr, appliedPlotRangeMode, plotRangeMode]);
 
-  const merra2RequestedDate = useMemo(() => {
-    if (!merra2LatestDate) return effectiveSelectedDateStr;
-    const maxSupported = dayjs(merra2LatestDate, 'YYYY-MM-DD');
-    return effectiveSelectedDate.isAfter(maxSupported, 'day')
-      ? merra2LatestDate
-      : effectiveSelectedDateStr;
-  }, [effectiveSelectedDate, effectiveSelectedDateStr, merra2LatestDate]);
+  const merra2RequestedDate = useMemo(
+    () => clampIsoDateToMerra2Archive(effectiveSelectedDateStr, merra2LatestDate),
+    [effectiveSelectedDateStr, merra2LatestDate]
+  );
 
   const showAeronet = layerOn('aeronet');
   const showFires = layerOn('fires');
@@ -274,6 +288,8 @@ export function useDashboardV2Data() {
       ? String(washuPeriodParts.year)
       : `${washuPeriodParts.year}-${String(washuPeriodParts.month).padStart(2, '0')}`;
 
+  const washuRequestedDate = washuMapDate.format('YYYY-MM-DD');
+
   const showMerra2Grid = showMERRA2PM25 && merra2ShowGridOverlay;
   const showWashuHeat = showWashU && showHeatMap;
   const showAaqeHeat = showAAQEForecast && showHeatMap;
@@ -298,6 +314,7 @@ export function useDashboardV2Data() {
     if (next === 'historical') {
       setMerra2ShowGridOverlay(true);
       setMerra2ShowStations(true);
+      setWashuShowStations(true);
       setSelectedDate(todayDefaultDate());
     }
     if (next === 'nrt') {
@@ -372,6 +389,17 @@ export function useDashboardV2Data() {
     [workflow, merra2LatestDate, openAqArchiveCutoffDate]
   );
 
+  const navigateToLocation = useCallback((location: DashboardV2Location) => {
+    setCountry(location.country);
+    setCity(location.city);
+    setMapSelectionLabel(location.label);
+    setMapFlyTo(toMapFlyTo(location));
+  }, []);
+
+  const flyToAfricaOverview = useCallback(() => {
+    navigateToLocation(AFRICA_OVERVIEW_LOCATION);
+  }, [navigateToLocation]);
+
   const resetDashboard = useCallback(() => {
     changeWorkflow('historical');
     setSelectedDate(todayDefaultDate());
@@ -382,17 +410,15 @@ export function useDashboardV2Data() {
     setAppliedPlotRangeMode('7D');
     setAppliedPlotStartDate(range.startDate);
     setAppliedPlotEndDate(range.endDate);
-    setCountry('Africa overview');
-    setCity('— select country first —');
     setStationNetwork('All station networks');
     setShowHeatMap(true);
     setHeatMapOpacity(78);
     setShowColorbar(true);
     setShowAeronetStations(true);
     setForecastLeadHours(24);
-    setMapSelectionLabel('Africa overview');
     setSelectedMetric(null);
-  }, [changeWorkflow]);
+    navigateToLocation(AFRICA_OVERVIEW_LOCATION);
+  }, [changeWorkflow, navigateToLocation]);
 
   // Warm fire cache on dashboard open; subscribe so in-flight App-level prefetch updates state too.
   useEffect(() => {
@@ -610,6 +636,68 @@ export function useDashboardV2Data() {
     };
   }, [merra2RequestedDate, preloadHistoricalLayers, merra2LatestDate, showMERRA2PM25]);
 
+  useEffect(() => {
+    if (!showWashU && !preloadHistoricalLayers) return;
+    let cancelled = false;
+
+    const loadWashuStationData = async () => {
+      setWashuStationsLoading(true);
+      setWashuStationsError(null);
+      setWashuStationsNotice(null);
+      setWashuDataDate(null);
+      const requestedDate = washuRequestedDate;
+
+      try {
+        const stations = await getWashUStationsByDate(requestedDate);
+        if (cancelled) return;
+        setWashuDataDate(requestedDate);
+        setWashuStations(stations);
+        setWashuStationsLoading(false);
+        return;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        const noDataForDate = /No WashU station data found for date/i.test(message);
+        if (!noDataForDate) {
+          if (cancelled) return;
+          setWashuStations([]);
+          setWashuStationsError(message || 'Failed to load WashU stations.');
+          setWashuStationsLoading(false);
+          return;
+        }
+      }
+
+      try {
+        let latestDate = washuLatestDate;
+        if (!latestDate) {
+          const latest = await getWashULatestDate();
+          latestDate = latest.latestDate;
+          if (latestDate) setWashuLatestDate(latestDate);
+        }
+        if (!latestDate) throw new Error('WashU latest parquet date is unavailable.');
+        const latestStations = await getWashUStationsByDate(latestDate);
+        if (cancelled) return;
+        setWashuDataDate(latestDate);
+        setWashuStations(latestStations);
+        if (latestDate !== requestedDate) {
+          setWashuStationsNotice(
+            `No WashU station data for ${requestedDate}. Showing latest available date: ${latestDate}.`
+          );
+        }
+      } catch (err: unknown) {
+        if (cancelled) return;
+        setWashuStations([]);
+        setWashuStationsError(err instanceof Error ? err.message : 'Failed to load WashU stations.');
+      } finally {
+        if (!cancelled) setWashuStationsLoading(false);
+      }
+    };
+
+    loadWashuStationData();
+    return () => {
+      cancelled = true;
+    };
+  }, [washuRequestedDate, preloadHistoricalLayers, washuLatestDate, showWashU]);
+
   // Warm MERRA2 + WashU grid cubes in IndexedDB before the user switches layers.
   useEffect(() => {
     if (!preloadHistoricalLayers) return;
@@ -789,11 +877,12 @@ export function useDashboardV2Data() {
     (showAeronet && aeronetLoading) ||
     (showMERRA2PM25 && merra2Loading) ||
     (showWashU && washuGridLoading) ||
+    (showWashU && washuShowStations && washuStationsLoading) ||
     (showOpenAq && openAqLoading) ||
     (showAAQEForecast && aaqeLoading) ||
     (showMerra2Grid && merra2GridLoading);
 
-  const layerError = aeronetError || merra2Error || openAqError || aaqeError;
+  const layerError = aeronetError || merra2Error || washuStationsError || openAqError || aaqeError;
 
   const contextChips = useMemo(() => {
     const chips = [workflowConfig.title.split(' ')[0], activeProduct.label];
@@ -898,6 +987,14 @@ export function useDashboardV2Data() {
     setWashuGridSource,
     washuGridFallbackReason,
     setWashuGridFallbackReason,
+    washuShowStations,
+    setWashuShowStations,
+    washuStations,
+    washuStationsLoading,
+    washuStationsError,
+    washuStationsNotice,
+    washuDataDate,
+    washuRequestedDate,
     washuMapDate,
     washuPeriodParts,
     washuPeriodLabel,
@@ -929,5 +1026,8 @@ export function useDashboardV2Data() {
     resetDashboard,
     handleMapPointSelect,
     resetMapSelection,
+    mapFlyTo,
+    navigateToLocation,
+    flyToAfricaOverview,
   };
 }

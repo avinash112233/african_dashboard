@@ -114,6 +114,10 @@
   margin-bottom: 14px;
 }
 
+.acm-section-label--spaced {
+  margin-top: 24px;
+}
+
 /* ── Chart grid ─────────────────────────────────────────────────── */
 .acm-grid {
   display: grid;
@@ -123,7 +127,236 @@
 
 .acm-grid-scatter {
   grid-template-columns: 1fr;
-  max-width: 640px;
+  max-width: none;
+}
+
+.acm-scatter-card {
+  max-width: none;
+  padding: 18px 20px 20px;
+}
+
+.acm-scatter-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.acm-scatter-header-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.acm-scatter-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.acm-scatter-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.acm-scatter-legend-axis {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.acm-scatter-legend-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.acm-scatter-legend-vs {
+  font-size: 11px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.acm-scatter-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.acm-scatter-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.acm-scatter-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.acm-scatter-stat-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.acm-scatter-stat-unit {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.acm-scatter-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.acm-scatter-chart-panel {
+  min-width: 0;
+  width: 100%;
+}
+
+.acm-scatter-chart-area {
+  width: 100%;
+  height: 300px;
+  min-height: 300px;
+  max-width: none;
+  margin: 0;
+  position: relative;
+}
+
+.acm-scatter-table-panel {
+  min-width: 0;
+  width: 100%;
+}
+
+.acm-scatter-col-head {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.acm-scatter-col-unit {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #94a3b8;
+  text-transform: none;
+}
+
+.acm-scatter-table-col-x {
+  color: #1e40af;
+}
+
+.acm-scatter-table-col-y {
+  color: #166534;
+}
+
+.acm-scatter-caption {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.acm-scatter-caption--header {
+  margin-top: 8px;
+}
+
+.acm-scatter-empty {
+  min-height: 180px;
+}
+
+.acm-combined-caption {
+  text-align: left;
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1.45;
+}
+
+.acm-scatter-table-wrap {
+  overflow: auto;
+  max-height: 280px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.acm-scatter-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.acm-scatter-table th,
+.acm-scatter-table td {
+  padding: 8px 12px;
+  text-align: right;
+  border-bottom: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+
+.acm-scatter-table td {
+  font-variant-numeric: tabular-nums;
+  color: #374151;
+}
+
+.acm-scatter-table th:first-child,
+.acm-scatter-table td:first-child {
+  text-align: left;
+}
+
+.acm-scatter-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #64748b;
+  vertical-align: bottom;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.acm-scatter-table tbody th {
+  font-weight: 600;
+  color: #374151;
+}
+
+.acm-scatter-table tbody tr:last-child th,
+.acm-scatter-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.acm-scatter-table tbody tr:nth-child(even) {
+  background: #fafbfc;
+}
+
+.acm-scatter-table tbody tr:hover {
+  background: #f1f5f9;
 }
 
 /* ── Chart card ─────────────────────────────────────────────────── */
@@ -152,6 +385,11 @@
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.acm-dot--sm {
+  width: 8px;
+  height: 8px;
 }
 
 .acm-card-title {
@@ -266,6 +504,20 @@
 
   .acm-grid {
     grid-template-columns: 1fr;
+  }
+
+  .acm-scatter-chart-area {
+    height: 260px;
+    min-height: 260px;
+  }
+
+  .acm-scatter-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .acm-scatter-stats {
+    width: 100%;
   }
 }
 

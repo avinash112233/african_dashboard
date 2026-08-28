@@ -20,9 +20,13 @@ import DashboardV2AeronetControls from '../dashboardV2/DashboardV2AeronetControl
 import DashboardV2LayerToggles from '../dashboardV2/DashboardV2LayerToggles';
 import DashboardV2PlottingPanel from '../dashboardV2/DashboardV2PlottingPanel';
 import DashboardV2PlotStack from '../dashboardV2/DashboardV2PlotStack';
+import DashboardV2CrossAnalysis from '../dashboardV2/DashboardV2CrossAnalysis';
+import DashboardV2LocationSearch from '../dashboardV2/DashboardV2LocationSearch';
 import DashboardV2MapLegend from '../dashboardV2/DashboardV2MapLegend';
+import { findLocationByLabel } from '../dashboardV2/locations';
 import { useDashboardV2Data } from '../dashboardV2/useDashboardV2Data';
 import { useDashboardV2LayerFeatures } from '../dashboardV2/useDashboardV2LayerFeatures';
+import { formatWashuMonthRange, washuRangeToIsoDates } from '../dashboardV2/washuPlotRange';
 import { getAODLevelColor, getAODLevelLabel } from '../utils/aodUtils';
 import '../styles/aaqeDashboardV2.css';
 import '../components/maps/MapVisualization.css';
@@ -59,6 +63,8 @@ const DashboardPageV2 = () => {
     merra2Loading: data.merra2Loading,
     merra2DataDate: data.merra2DataDate,
     merra2Stations: data.merra2Stations,
+    washuStations: data.washuStations,
+    washuDataDate: data.washuDataDate,
     firePoints: data.firePoints,
     openAqMapMode: data.openAqMapMode,
     openAqMonitorsOnly: data.openAqMonitorsOnly,
@@ -81,10 +87,37 @@ const DashboardPageV2 = () => {
   });
 
   const showAeronetTimeSeries = data.showAeronet && layers.selectedSite != null;
+  const showWashuStationSeries = data.showWashU && layers.selectedWashuStation != null;
+
+  const crossAnalysisRange = useMemo(() => {
+    if (layers.analysisAnchor?.anchorSource === 'washu') {
+      const { startDate, endDate } = washuRangeToIsoDates(layers.washuAppliedSeriesRange);
+      return {
+        startDate,
+        endDate,
+        plotRangeLabel: `Monthly · ${formatWashuMonthRange(layers.washuAppliedSeriesRange)}`,
+      };
+    }
+    return {
+      startDate: data.effectivePlotStartDate,
+      endDate: data.effectivePlotEndDate,
+      plotRangeLabel: data.plotRangeLabel,
+    };
+  }, [
+    layers.analysisAnchor?.anchorSource,
+    layers.washuAppliedSeriesRange,
+    data.effectivePlotStartDate,
+    data.effectivePlotEndDate,
+    data.plotRangeLabel,
+  ]);
 
   useEffect(() => {
     if (showAeronetTimeSeries) scrollPlotStackIntoView();
   }, [showAeronetTimeSeries, layers.selectedSite?.site, scrollPlotStackIntoView]);
+
+  useEffect(() => {
+    if (showWashuStationSeries) scrollPlotStackIntoView();
+  }, [showWashuStationSeries, layers.selectedWashuStation?.sitename, scrollPlotStackIntoView]);
 
   const cityOptions = useMemo(
     () => DASHBOARD_V2_CITIES[data.country] ?? DASHBOARD_V2_CITIES['Africa overview'],
@@ -151,6 +184,7 @@ const DashboardPageV2 = () => {
         : 86;
 
   const [washuPm25Sample, setWashuPm25Sample] = useState<WashUPM25Sample | null>(null);
+  const [mapToolbarExpanded, setMapToolbarExpanded] = useState(false);
 
   const handlePm25Sample = (sample: PM25Sample | null) => {
     if (sample) {
@@ -163,14 +197,44 @@ const DashboardPageV2 = () => {
   };
 
   const handleCountryChange = (country: string) => {
-    data.setCountry(country);
     const cities = DASHBOARD_V2_CITIES[country] ?? DASHBOARD_V2_CITIES['Africa overview'];
-    data.setCity(cities[0] ?? '— select country first —');
+    const firstCity = cities[0] ?? '— select country first —';
+    if (country === 'Africa overview') {
+      data.flyToAfricaOverview();
+      return;
+    }
+    const location = findLocationByLabel(firstCity);
+    if (location) {
+      data.navigateToLocation(location);
+      return;
+    }
+    data.setCountry(country);
+    data.setCity(firstCity);
+  };
+
+  const handleCityChange = (cityLabel: string) => {
+    const location = findLocationByLabel(cityLabel);
+    if (location) {
+      data.navigateToLocation(location);
+      return;
+    }
+    data.setCity(cityLabel);
   };
 
   const handleResetMapFocus = () => {
     layers.clearAllSelections();
     data.resetMapSelection();
+  };
+
+  const handleFitMapView = () => {
+    if (data.country === 'Africa overview') {
+      data.flyToAfricaOverview();
+      return;
+    }
+    const location = findLocationByLabel(data.city);
+    if (location) {
+      data.navigateToLocation(location);
+    }
   };
 
   const handleToggleLayer = useCallback(
@@ -196,9 +260,12 @@ const DashboardPageV2 = () => {
   const showMerra2Legend =
     data.showMERRA2PM25 && (data.showMerra2Grid || data.merra2ShowStations);
 
+  const showWashuLegend =
+    data.showWashU && (data.showWashuHeat || data.washuShowStations);
+
   const showFloatingLegend =
     data.showColorbar &&
-    (showMerra2Legend || data.showWashuHeat || data.showAAQEForecast);
+    (showMerra2Legend || showWashuLegend || data.showAaqeHeat || data.showAAQEForecast);
 
   return (
     <main className={`dashboard-v2-page workflow-${data.workflow}`}>
@@ -268,7 +335,7 @@ const DashboardPageV2 = () => {
               id="v2-city"
               className="form-select"
               value={data.city}
-              onChange={(e) => data.setCity(e.target.value)}
+              onChange={(e) => handleCityChange(e.target.value)}
             >
               {cityOptions.map((c) => (
                 <option key={c} value={c}>
@@ -467,6 +534,25 @@ const DashboardPageV2 = () => {
                     </div>
                   </>
                 )}
+              {data.showWashU && (
+                <>
+                  <div className="form-check form-switch">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      id="v2-washu-stations"
+                      checked={data.washuShowStations}
+                      onChange={(e) => data.setWashuShowStations(e.target.checked)}
+                    />
+                    <label className="form-check-label" htmlFor="v2-washu-stations">
+                      WashU stations
+                    </label>
+                  </div>
+                  {data.washuStationsNotice && (
+                    <p className="mini-note mb-0">{data.washuStationsNotice}</p>
+                  )}
+                </>
+              )}
               </div>
 
               {isPointOnlyHeat && (
@@ -656,66 +742,122 @@ const DashboardPageV2 = () => {
           <div
             className={`map-card${showAeronetTimeSeries ? '' : ' dashboard-v2-map-card--expanded'}`}
           >
-            <div className="map-toolbar floating-map-panel dashboard-v2-map-toolbar">
-              <div className="fw-bold drag-handle">
-                <i className="bi bi-grip-vertical me-1" aria-hidden="true" />
-                <i className="bi bi-layers me-1" aria-hidden="true" />
-                Interactive map view
+            <div
+              className={`map-toolbar floating-map-panel dashboard-v2-map-toolbar${
+                mapToolbarExpanded ? ' dashboard-v2-map-toolbar--expanded' : ''
+              }`}
+            >
+              <div className="dashboard-v2-map-toolbar-header">
+                <div className="dashboard-v2-map-toolbar-title">
+                  <i className="bi bi-layers" aria-hidden="true" />
+                  Map view
+                </div>
+                <div className="dashboard-v2-map-toolbar-quick-actions">
+                  <button
+                    type="button"
+                    className="dashboard-v2-map-toolbar-icon-btn"
+                    onClick={handleFitMapView}
+                    aria-label="Fit map to selected location"
+                    title="Fit focus"
+                  >
+                    <i className="bi bi-crosshair" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="dashboard-v2-map-toolbar-icon-btn"
+                    onClick={handleResetMapFocus}
+                    aria-label="Clear map selection"
+                    title="Reset point"
+                  >
+                    <i className="bi bi-arrow-counterclockwise" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className="dashboard-v2-map-toolbar-icon-btn"
+                    onClick={() => setMapToolbarExpanded((open) => !open)}
+                    aria-expanded={mapToolbarExpanded}
+                    aria-label={mapToolbarExpanded ? 'Collapse map panel' : 'Expand map panel'}
+                    title={mapToolbarExpanded ? 'Collapse' : 'More options'}
+                  >
+                    <i
+                      className={`bi bi-chevron-${mapToolbarExpanded ? 'up' : 'down'}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                </div>
               </div>
-              <div className="mini-note mb-2">
-                Click a station, fire hotspot, or grid cell to update metrics and plots below.
+              <DashboardV2LocationSearch
+                selectedLabel={data.mapSelectionLabel}
+                onSelect={data.navigateToLocation}
+              />
+              <div className="dashboard-v2-map-toolbar-summary" title={data.mapSelectionLabel}>
+                Focus: {data.mapSelectionLabel}
               </div>
-              <div className="d-flex flex-wrap gap-1 mb-2">
-                {data.contextChips.map((chip) => (
-                  <span key={`map-${chip}`} className="section-chip">
-                    {chip}
-                  </span>
-                ))}
-              </div>
-              {activeLayerProducts.length > 0 && (
-                <div className="dashboard-v2-active-layer-chips mb-2" aria-label="Active map layers">
-                  {activeLayerProducts.map(({ layer, label }) => {
-                    const canRemove = data.activeLayers.length > 1;
-                    return (
-                      <span
-                        key={layer}
-                        className={`dashboard-v2-active-layer-chip${
-                          data.primaryLayer === layer ? ' dashboard-v2-active-layer-chip--primary' : ''
-                        }`}
-                      >
-                        {label}
-                        {data.primaryLayer === layer && (
-                          <span className="dashboard-v2-active-layer-chip-tag">Primary</span>
-                        )}
-                        {canRemove && (
-                          <button
-                            type="button"
-                            className="dashboard-v2-active-layer-chip-remove"
-                            aria-label={`Hide ${label} layer`}
-                            onClick={() => handleToggleLayer(layer)}
-                          >
-                            ×
-                          </button>
-                        )}
+              {mapToolbarExpanded && (
+                <div className="dashboard-v2-map-toolbar-details">
+                  <div className="mini-note dashboard-v2-map-toolbar-note">
+                    Click stations, fires, or grid cells to update plots.
+                  </div>
+                  <div className="d-flex flex-wrap gap-1 mb-2">
+                    {data.contextChips.map((chip) => (
+                      <span key={`map-${chip}`} className="section-chip dashboard-v2-map-toolbar-chip">
+                        {chip}
                       </span>
-                    );
-                  })}
+                    ))}
+                  </div>
+                  {activeLayerProducts.length > 0 && (
+                    <div
+                      className="dashboard-v2-active-layer-chips mb-2"
+                      aria-label="Active map layers"
+                    >
+                      {activeLayerProducts.map(({ layer, label }) => {
+                        const canRemove = data.activeLayers.length > 1;
+                        return (
+                          <span
+                            key={layer}
+                            className={`dashboard-v2-active-layer-chip${
+                              data.primaryLayer === layer
+                                ? ' dashboard-v2-active-layer-chip--primary'
+                                : ''
+                            }`}
+                          >
+                            {label}
+                            {data.primaryLayer === layer && (
+                              <span className="dashboard-v2-active-layer-chip-tag">Primary</span>
+                            )}
+                            {canRemove && (
+                              <button
+                                type="button"
+                                className="dashboard-v2-active-layer-chip-remove"
+                                aria-label={`Hide ${label} layer`}
+                                onClick={() => handleToggleLayer(layer)}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="map-panel-actions dashboard-v2-map-toolbar-actions">
+                    <button
+                      type="button"
+                      className="btn btn-outline-aaqe btn-sm"
+                      onClick={handleResetMapFocus}
+                    >
+                      Reset point
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline-aaqe btn-sm"
+                      onClick={handleFitMapView}
+                    >
+                      Fit focus
+                    </button>
+                  </div>
                 </div>
               )}
-              <div className="selection-info">
-                <strong>Selected focus:</strong> {data.mapSelectionLabel}
-              </div>
-              <div className="map-panel-actions">
-                <button type="button" className="btn btn-outline-aaqe" onClick={handleResetMapFocus}>
-                  <i className="bi bi-arrow-counterclockwise me-1" aria-hidden="true" />
-                  Reset point
-                </button>
-                <button type="button" className="btn btn-outline-aaqe" onClick={handleResetMapFocus}>
-                  <i className="bi bi-crosshair me-1" aria-hidden="true" />
-                  Fit focus
-                </button>
-              </div>
-              <div className="panel-resize-note">Moveable · resizable</div>
             </div>
 
             <div className="dashboard-v2-map-wrap">
@@ -740,7 +882,11 @@ const DashboardPageV2 = () => {
                 merra2GridColorMode="aqi"
                 merra2EnhancedLegend
                 onPm25Sample={handlePm25Sample}
-                showWashU={data.showWashuHeat}
+                showWashU={data.showWashU}
+                showWashuGridOverlay={data.showWashuHeat}
+                showWashuStations={data.showWashU && data.washuShowStations}
+                washuStations={data.washuStations}
+                onWashuStationClick={layers.handleWashuStationClick}
                 washuPeriod={data.washuPeriod}
                 washuYear={data.washuPeriodParts.year}
                 washuMonth={data.washuPeriod === 'monthly' ? data.washuPeriodParts.month : null}
@@ -779,6 +925,7 @@ const DashboardPageV2 = () => {
                 fireChartRectDrawActive={layers.fireChartRectDrawActive}
                 fireChartBounds={layers.fireChartBounds}
                 onFireChartBoundsCommit={layers.handleFireChartBoundsCommit}
+                flyToTarget={data.mapFlyTo}
               />
             </div>
 
@@ -806,6 +953,22 @@ const DashboardPageV2 = () => {
 
           <div ref={plotStackRef} className="plot-stack dashboard-v2-plot-stack">
             <DashboardV2PlotStack data={data} layers={layers} />
+            <DashboardV2CrossAnalysis
+              workflow={data.workflow}
+              anchor={layers.analysisAnchor}
+              startDate={crossAnalysisRange.startDate}
+              endDate={crossAnalysisRange.endDate}
+              plotRangeLabel={crossAnalysisRange.plotRangeLabel}
+              aeronetAodVersion={data.aeronetAodVersion}
+              merra2Stations={data.merra2Stations}
+              openAqStations={data.openAqStations}
+              openAqSeries={layers.openAqSeriesForAnalysis}
+              merra2Series={layers.merra2SeriesForAnalysis}
+              aeronetChartData={layers.chartData}
+              washuPinSeries={layers.washuSeries}
+              washuStationSeries={layers.washuStationSeries}
+              onClearAnchor={layers.clearAnalysisAnchor}
+            />
           </div>
           </div>
         </section>

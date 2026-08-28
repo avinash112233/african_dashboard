@@ -67,32 +67,83 @@ function mapWorkerExitCodeToHttpStatus(code, message) {
   return 500;
 }
 
-export async function getStationsForDate(dateStr) {
-  const cached = getFresh(stationsByDateCache, dateStr, STATIONS_CACHE_TTL_MS);
-  if (cached) return cached;
+async function resolveLatestArchiveDate() {
+  try {
+    const latest = await getLatestStationDate();
+    return latest?.latestDate ?? null;
+  } catch {
+    return null;
+  }
+}
 
-  const out = await runWorker(['stations', '--date', dateStr]);
+async function clampDateToArchive(dateStr) {
+  const latest = await resolveLatestArchiveDate();
+  if (!latest || dateStr <= latest) return dateStr;
+  console.warn(`[MERRA2] Clamped ${dateStr} → ${latest} (latest parquet date)`);
+  return latest;
+}
+
+async function clampRangeToArchive(start, end) {
+  const latest = await resolveLatestArchiveDate();
+  if (!latest) return { start, end };
+  let clampedStart = start > latest ? latest : start;
+  let clampedEnd = end > latest ? latest : end;
+  if (clampedStart > clampedEnd) clampedStart = clampedEnd;
+  if (clampedStart !== start || clampedEnd !== end) {
+    console.warn(
+      `[MERRA2] Clamped range ${start}–${end} → ${clampedStart}–${clampedEnd} (latest parquet date)`
+    );
+  }
+  return { start: clampedStart, end: clampedEnd };
+}
+
+export async function getStationsForDate(dateStr) {
+  const clampedDate = await clampDateToArchive(dateStr);
+  const cached = getFresh(stationsByDateCache, clampedDate, STATIONS_CACHE_TTL_MS);
+  if (cached) {
+    return { date: clampedDate, requestedDate: dateStr, stations: cached, clamped: clampedDate !== dateStr };
+  }
+
+  const out = await runWorker(['stations', '--date', clampedDate]);
   const stations = out?.stations ?? [];
-  stationsByDateCache.set(dateStr, { ts: Date.now(), data: stations });
-  return stations;
+  stationsByDateCache.set(clampedDate, { ts: Date.now(), data: stations });
+  return { date: clampedDate, requestedDate: dateStr, stations, clamped: clampedDate !== dateStr };
 }
 
 export async function getStationTimeseries({ sitename, start, end }) {
-  const cacheKey = `${sitename}|${start}|${end}`;
+  const { start: clampedStart, end: clampedEnd } = await clampRangeToArchive(start, end);
+  const cacheKey = `${sitename}|${clampedStart}|${clampedEnd}`;
   const cached = getFresh(timeseriesCache, cacheKey, TIMESERIES_CACHE_TTL_MS);
-  if (cached) return cached;
+  if (cached) {
+    return {
+      ...cached,
+      start: clampedStart,
+      end: clampedEnd,
+      requestedStart: start,
+      requestedEnd: end,
+      clamped: clampedStart !== start || clampedEnd !== end,
+    };
+  }
 
   const out = await runWorker([
     'station-timeseries',
     '--sitename',
     String(sitename ?? ''),
     '--start',
-    String(start ?? ''),
+    String(clampedStart ?? ''),
     '--end',
-    String(end ?? ''),
+    String(clampedEnd ?? ''),
   ]);
-  timeseriesCache.set(cacheKey, { ts: Date.now(), data: out });
-  return out;
+  const payload = {
+    ...out,
+    start: clampedStart,
+    end: clampedEnd,
+    requestedStart: start,
+    requestedEnd: end,
+    clamped: clampedStart !== start || clampedEnd !== end,
+  };
+  timeseriesCache.set(cacheKey, { ts: Date.now(), data: payload });
+  return payload;
 }
 
 export async function getStationList() {
